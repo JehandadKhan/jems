@@ -374,6 +374,23 @@ return {
 }
 EOF
 
+# render-markdown.lua: in-buffer prettifying of markdown (headings, code
+# blocks, tables, checkboxes). Works in any terminal — no graphics needed.
+# Inline images still come from image.nvim's markdown integration above.
+write_managed_file "$LAZYVIM_DIR/lua/plugins/render-markdown.lua" "--" <<'EOF'
+return {
+  {
+    "MeanderingProgrammer/render-markdown.nvim",
+    dependencies = { "nvim-treesitter/nvim-treesitter", "echasnovski/mini.icons" },
+    ft = { "markdown", "quarto" },
+    opts = {
+      file_types = { "markdown", "quarto" },
+      completions = { lsp = { enabled = true } },
+    },
+  },
+}
+EOF
+
 chown -R "$TARGET_USER:$TARGET_USER" "$LAZYVIM_DIR" 2>/dev/null || true
 
 # ---------- 10. tmux passthrough (so image.nvim works inside tmux) ----------
