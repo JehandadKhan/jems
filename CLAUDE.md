@@ -4,12 +4,13 @@ This repo is a single-file Bash installer (`install-lazyvim.sh`) that sets up
 the **prerequisites** for a Neovim + LazyVim + Jupyter notebook stack on a
 fresh Ubuntu/WSL2 box or a fresh macOS (14+, Apple Silicon or Intel) box.
 "Prerequisites" means anything that is not a dotfile: apt/brew packages, the
-nvim binary, Node.js, clangd, pyright, fzf binaries, the Python venv that
-molten-nvim depends on, and a couple of environment-specific symlinks under
-`~/.local/bin`. Linux uses apt + a from-source nvim build and runs under
-`sudo`; macOS uses Homebrew and runs as the user (brew refuses sudo). The
-OS is detected via `uname -s` at the top and platform-specific blocks
-branch on `$OS` (`linux` | `macos`).
+nvim binary, Node.js, clangd, basedpyright, the Claude Code CLI, fzf
+binaries, the Python venv that molten-nvim depends on, the
+hedronvision/bazel-compile-commands-extractor clone + helper, and a couple of
+environment-specific symlinks under `~/.local/bin`. Linux uses apt + a
+from-source nvim build and runs under `sudo`; macOS uses Homebrew and runs as
+the user (brew refuses sudo). The OS is detected via `uname -s` at the top
+and platform-specific blocks branch on `$OS` (`linux` | `macos`).
 
 ## Out of scope: dotfiles
 
@@ -50,6 +51,20 @@ Don't break these without updating both sides:
   nvim is launched inside tmux, otherwise `:checkhealth image.nvim` errors
   with "tmux does not have allow-passthrough enabled" and plots never
   render. The chezmoi'd `~/.tmux.conf` is expected to set this.
+- basedpyright vs pyright: this script installs `basedpyright` globally via
+  npm (and uninstalls any old `pyright` it finds). The chezmoi'd
+  `lua/plugins/lspconfig.lua` is expected to disable `pyright` in its
+  servers table — running both against the same buffer leads to duplicate
+  diagnostics if LazyVim's `lang.python` extra is enabled.
+- bazel helper: `~/.local/bin/bazel-compile-commands` is installed by this
+  script and references `~/.local/share/bazel-compile-commands-extractor`
+  via a Bazel `local_path_override`, so it has no network deps at run time.
+  It writes a fenced managed block into the Bazel workspace's
+  `MODULE.bazel`/`WORKSPACE`, plus `tools/clangd/BUILD.bazel`. None of
+  those paths are dotfiles, so they belong here, not in chezmoi.
+- Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
+  (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
+  under `~/.claude/`, which is chezmoi's territory if you want to manage it.
 
 ## Single source of truth
 Everything install-side lives in `install-lazyvim.sh`. There is no Ansible,
@@ -58,9 +73,11 @@ no Makefile. If you find yourself wanting to add a second file, push back
 
 ## Re-run contract
 The script is designed to be run repeatedly on the same box:
-- apt/brew / node / nvim / fzf / clangd / pyright / venv steps are
-  idempotent. Brew installs are gated on `brew list --formula <name>` so
-  we never gratuitously upgrade a tool the user is pinning.
+- apt/brew / node / nvim / fzf / clangd / basedpyright / claude code / bazel
+  helper / venv steps are idempotent. Brew installs are gated on
+  `brew list --formula <name>` so we never gratuitously upgrade a tool the
+  user is pinning. `npm i -g` for basedpyright/claude is run unconditionally
+  to pick up new releases.
 - The Python venv at `~/.local/share/nvim-venv` is reused if it exists;
   pip dependencies inside it are upgraded on every run.
 - Symlinks under `~/.local/bin` are re-pointed each run with `ln -sf` so
