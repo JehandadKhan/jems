@@ -41,13 +41,19 @@
 #     - apt.llvm.org as a persistent apt source for clangd-18 (every future
 #         'apt update' will hit it; the GPG key is NOT fingerprint-pinned —
 #         trusts whatever the URL serves at install time)
+#     - cli.github.com as a persistent apt source for `gh` (same caveat:
+#         every future 'apt update' will hit it; key not fingerprint-pinned).
+#         Skipped if INSTALL_GH=0.
+#     - chezmoi binary at /usr/local/bin/chezmoi via get.chezmoi.io
+#         (no apt repo). Skipped if INSTALL_CHEZMOI=0.
 #     - update-alternatives entries for /usr/bin/clangd (and optionally
 #         /usr/bin/{vim,vi} when LINK_VIM=1) — affects all users on the box
 #
 #   macOS (Homebrew, runs as your user):
 #     - brew formulae installed if missing: neovim, node, ripgrep, ninja,
-#         cmake, gettext, imagemagick, llvm (for clangd). Existing versions
-#         are left alone (the script does not 'brew upgrade').
+#         cmake, gettext, imagemagick, llvm (for clangd), chezmoi, gh.
+#         Existing versions are left alone (the script does not 'brew
+#         upgrade'). chezmoi/gh are gated on their respective INSTALL_* flags.
 #     - Symlink ~/.local/bin/clangd -> $(brew --prefix llvm)/bin/clangd
 #         (brew does not link llvm by default to avoid clobbering Apple's
 #         clang). Remove the symlink to undo.
@@ -66,6 +72,12 @@
 #     - Claude Code CLI via 'npm i -g @anthropic-ai/claude-code' (provides
 #         the `claude` command). Skipped if INSTALL_CLAUDE=0. Uninstall with
 #         'npm uninstall -g @anthropic-ai/claude-code'.
+#     - chezmoi (dotfile manager). Linux: official get.chezmoi.io install
+#         script writes the binary to /usr/local/bin/chezmoi (no apt repo).
+#         macOS: 'brew install chezmoi'. Skipped if INSTALL_CHEZMOI=0.
+#     - gh (GitHub CLI). Linux: cli.github.com is added as a persistent apt
+#         source (every future 'apt update' will hit it) and gh is installed
+#         from there. macOS: 'brew install gh'. Skipped if INSTALL_GH=0.
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -105,10 +117,17 @@
 #   INSTALL_CLAUDE=0    Skip installing the Claude Code CLI
 #                         (@anthropic-ai/claude-code) globally via npm.
 #                         Default ON.
+#   INSTALL_CHEZMOI=0   Skip installing chezmoi. Default ON. Linux: writes
+#                         /usr/local/bin/chezmoi via get.chezmoi.io.
+#                         macOS: 'brew install chezmoi'.
+#   INSTALL_GH=0        Skip installing the GitHub CLI (`gh`). Default ON.
+#                         Linux: adds cli.github.com as a persistent apt
+#                         source. macOS: 'brew install gh'.
 #
-# To uninstall the apt sources later (Linux; clangd-18 binary will remain):
+# To uninstall the apt sources later (Linux; clangd-18 / gh binaries remain):
 #   sudo rm /etc/apt/sources.list.d/llvm-18.list /etc/apt/keyrings/llvm.gpg
 #   sudo rm /etc/apt/sources.list.d/nodesource.list
+#   sudo rm /etc/apt/sources.list.d/github-cli.list /etc/apt/keyrings/githubcli-archive-keyring.gpg
 
 set -euo pipefail
 
@@ -116,6 +135,8 @@ LINK_VIM="${LINK_VIM:-1}"
 SKIP_NVIM_BUILD="${SKIP_NVIM_BUILD:-0}"
 INSTALL_BAZEL_HELPER="${INSTALL_BAZEL_HELPER:-1}"
 INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"
+INSTALL_CHEZMOI="${INSTALL_CHEZMOI:-1}"
+INSTALL_GH="${INSTALL_GH:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -633,6 +654,45 @@ if [ ! -f "$ROOT/compile_commands.json" ]; then
     echo "       unbuildable, or hedron's actions failed for a specific rule." >&2
     exit 1
 fi
+
+# Normalize joined include flags. Some Bazel CC toolchains (notably XLA's
+# rules_ml_toolchain) declare include flag_groups as `flags = ["-isystem
+# %{path}"]` rather than `flags = ["-isystem", "%{path}"]`. Both produce
+# the same final compile invocation because Bazel space-joins flags
+# anyway, but `bazel aquery` (which hedron consumes) returns whichever
+# token shape the toolchain handed it. The joined form lands in
+# compile_commands.json as a single "-isystem /path" arg, which clang
+# parses as `-isystem ` followed by a path with a literal leading space
+# — silently ignored as nonexistent. The resulting JSON looks fine but
+# clangd can't find <tuple> et al. We split joined include tokens here
+# so the JSON is correct regardless of toolchain quirks. Drop this once
+# https://github.com/hedronvision/bazel-compile-commands-extractor lands
+# the same fix upstream.
+python3 - "$ROOT/compile_commands.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    db = json.load(f)
+joined = ('-isystem ', '-iquote ', '-I ', '-isysroot ', '-imacros ', '-include ', '-Xclang ')
+n = 0
+for e in db:
+    args = e.get('arguments')
+    if not args:
+        continue
+    new = []
+    for a in args:
+        if a.startswith(joined):
+            flag, _, rest = a.partition(' ')
+            if rest:
+                new.append(flag); new.append(rest); n += 1
+                continue
+        new.append(a)
+    e['arguments'] = new
+with open(p, 'w') as f:
+    json.dump(db, f, indent=2)
+print(f'==> normalized {n} joined include flags')
+PY
+
 N="$(grep -c '"file":' "$ROOT/compile_commands.json" 2>/dev/null || echo 0)"
 echo "==> Wrote $ROOT/compile_commands.json ($N entries)"
 echo "    clangd will pick this up automatically on next nvim launch."
@@ -650,18 +710,31 @@ fi
 # binary lspconfig invokes is `basedpyright-langserver`, also installed by
 # this npm package. We disable pyright in lspconfig.lua so the two don't
 # fight over the same buffer if LazyVim's lang.python extra is enabled.
+#
+# Roll back any prior pyright install BEFORE installing basedpyright.
+# basedpyright ships its own `pyright`/`pyright-langserver` shims, so a
+# leftover pyright (from an earlier version of this script that did
+# `npm i -g pyright`) makes the basedpyright install fail with EEXIST on
+# $(npm prefix -g)/bin/pyright. Order matters here: uninstall first, then
+# install.
+if npm ls -g --depth=0 pyright >/dev/null 2>&1; then
+    echo "==> Removing previously-installed pyright (replaced by basedpyright)"
+    npm uninstall -g pyright >/dev/null 2>&1 || true
+fi
+# Belt-and-braces: if the shim lingers (orphaned from a partial uninstall,
+# or placed there by something other than npm), drop it directly so the
+# basedpyright install below doesn't EEXIST.
+NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null || echo /usr)/bin"
+for stale in pyright pyright-langserver; do
+    if [ -e "$NPM_GLOBAL_BIN/$stale" ] || [ -L "$NPM_GLOBAL_BIN/$stale" ]; then
+        echo "==> Removing stale $NPM_GLOBAL_BIN/$stale (conflicts with basedpyright)"
+        rm -f "$NPM_GLOBAL_BIN/$stale"
+    fi
+done
+
 echo "==> Installing/updating basedpyright via 'npm i -g basedpyright'"
 npm install -g basedpyright >/dev/null
 echo "    basedpyright: $(basedpyright --version 2>/dev/null || echo unknown)"
-
-# Roll back the prior pyright install if present. Earlier versions of this
-# script installed pyright; leaving it on disk after the switch causes PATH
-# ordering surprises and the occasional dual-LSP if a user later enables
-# LazyVim's lang.python extra. npm uninstall is a no-op when not installed.
-if npm ls -g --depth=0 pyright >/dev/null 2>&1; then
-    echo "    Removing previously-installed pyright (replaced by basedpyright)"
-    npm uninstall -g pyright >/dev/null 2>&1 || true
-fi
 
 # ---------- 6b. Claude Code CLI (global via npm) ----------
 # Anthropic's official CLI. Same npm-global story as basedpyright, so we
@@ -673,6 +746,66 @@ if [ "$INSTALL_CLAUDE" = "1" ]; then
     echo "    claude: $(claude --version 2>/dev/null || echo unknown)"
 else
     echo "==> INSTALL_CLAUDE=0; skipping Claude Code CLI install"
+fi
+
+# ---------- 6c. chezmoi (dotfile manager) ----------
+# Ironic but useful: this script installs the *prerequisites* for the nvim/
+# Jupyter stack and explicitly leaves dotfiles to chezmoi (see CLAUDE.md), so
+# installing chezmoi itself is the bootstrap step that makes that contract
+# work end-to-end. Linux uses the official get.chezmoi.io installer (writes a
+# single binary to /usr/local/bin), macOS uses brew. Both are idempotent.
+if [ "$INSTALL_CHEZMOI" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        if ! command -v chezmoi >/dev/null 2>&1; then
+            echo "==> Installing chezmoi to /usr/local/bin (via get.chezmoi.io)"
+            sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
+        else
+            echo "==> chezmoi already installed: $(chezmoi --version 2>/dev/null | head -1)"
+        fi
+    else
+        if brew list --formula chezmoi >/dev/null 2>&1; then
+            echo "==> chezmoi already installed via brew"
+        else
+            echo "==> Installing chezmoi via brew"
+            brew install chezmoi
+        fi
+    fi
+else
+    echo "==> INSTALL_CHEZMOI=0; skipping chezmoi install"
+fi
+
+# ---------- 6d. gh (GitHub CLI) ----------
+# Linux pulls from cli.github.com's apt repo (persistent — every future
+# 'apt update' will hit it). macOS goes through brew. The GPG key is fetched
+# at install time and not fingerprint-pinned, mirroring how this script
+# handles apt.llvm.org for clangd.
+if [ "$INSTALL_GH" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        if ! command -v gh >/dev/null 2>&1; then
+            echo "==> Installing gh (adds cli.github.com as a persistent apt source)"
+            install -d -m 0755 /etc/apt/keyrings
+            if [ ! -f /etc/apt/keyrings/githubcli-archive-keyring.gpg ]; then
+                wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                    > /etc/apt/keyrings/githubcli-archive-keyring.gpg
+                chmod 0644 /etc/apt/keyrings/githubcli-archive-keyring.gpg
+            fi
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+                > /etc/apt/sources.list.d/github-cli.list
+            apt-get update -y
+            apt-get install -y gh
+        else
+            echo "==> gh already installed: $(gh --version 2>/dev/null | head -1)"
+        fi
+    else
+        if brew list --formula gh >/dev/null 2>&1; then
+            echo "==> gh already installed via brew"
+        else
+            echo "==> Installing gh via brew"
+            brew install gh
+        fi
+    fi
+else
+    echo "==> INSTALL_GH=0; skipping gh install"
 fi
 
 # ---------- 7. nvim Python venv (for molten-nvim + jupyter) ----------
@@ -717,6 +850,18 @@ else
     CLAUDE_STATUS="(skipped: INSTALL_CLAUDE=0)"
 fi
 
+if [ "$INSTALL_CHEZMOI" = "1" ]; then
+    CHEZMOI_STATUS="$(chezmoi --version 2>/dev/null | head -1 || echo missing)"
+else
+    CHEZMOI_STATUS="(skipped: INSTALL_CHEZMOI=0)"
+fi
+
+if [ "$INSTALL_GH" = "1" ]; then
+    GH_STATUS="$(gh --version 2>/dev/null | head -1 || echo missing)"
+else
+    GH_STATUS="(skipped: INSTALL_GH=0)"
+fi
+
 echo
 echo "==> Done."
 printf "    %-13s %s\n" "os:"           "$OS"
@@ -728,14 +873,20 @@ printf "    %-13s %s\n" "fzf:"          "$("$USER_HOME/.fzf/bin/fzf" --version 2
 printf "    %-13s %s\n" "venv:"         "$NVIM_VENV ($("$NVIM_VENV/bin/python" --version 2>/dev/null || echo missing))"
 printf "    %-13s %s\n" "bazel helper:" "$BAZEL_HELPER_STATUS"
 printf "    %-13s %s\n" "claude:"       "$CLAUDE_STATUS"
+printf "    %-13s %s\n" "chezmoi:"      "$CHEZMOI_STATUS"
+printf "    %-13s %s\n" "gh:"           "$GH_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
     echo "    /etc/apt/sources.list.d/llvm-18.list"
     echo "    /etc/apt/keyrings/llvm.gpg"
     echo "    /etc/apt/sources.list.d/nodesource.list"
+    if [ "$INSTALL_GH" = "1" ]; then
+        echo "    /etc/apt/sources.list.d/github-cli.list"
+        echo "    /etc/apt/keyrings/githubcli-archive-keyring.gpg"
+    fi
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm"
+    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"
