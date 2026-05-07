@@ -57,6 +57,9 @@
 #         (e.g. JAX). On re-run, any previously-installed pyright is removed
 #         via 'npm uninstall -g pyright' so we don't end up with two competing
 #         Python LSPs against the same buffer.
+#     - Claude Code CLI via 'npm i -g @anthropic-ai/claude-code' (provides
+#         the `claude` command). Skipped if INSTALL_CLAUDE=0. Uninstall with
+#         'npm uninstall -g @anthropic-ai/claude-code'.
 #     - fzf cloned to ~/.fzf; appends ONE line to ~/.bashrc and (if it
 #         exists) ~/.zshrc. fish rc files are NOT modified.
 #     - LazyVim starter cloned to ~/.config/nvim (preserved on re-run by
@@ -104,6 +107,9 @@
 #                         ~/.local/bin/bazel-compile-commands helper.
 #                         Set to 0 if you don't work in any Bazel C++ repos.
 #                         Default ON.
+#   INSTALL_CLAUDE=0    Skip installing the Claude Code CLI
+#                         (@anthropic-ai/claude-code) globally via npm.
+#                         Default ON.
 #
 # To uninstall the apt sources later (Linux; clangd-18 binary will remain):
 #   sudo rm /etc/apt/sources.list.d/llvm-18.list /etc/apt/keyrings/llvm.gpg
@@ -116,6 +122,7 @@ FORCE_LAZYVIM="${FORCE_LAZYVIM:-0}"
 UPDATE_PLUGINS="${UPDATE_PLUGINS:-1}"
 SKIP_NVIM_BUILD="${SKIP_NVIM_BUILD:-0}"
 INSTALL_BAZEL_HELPER="${INSTALL_BAZEL_HELPER:-1}"
+INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -648,9 +655,23 @@ else
     TARGETS=("//...")
 fi
 
-# bzlmod is the modern path (XLA, JAX, recent TF). MODULE.bazel exists and is
-# non-empty -> bzlmod. Otherwise we fall back to legacy WORKSPACE wiring.
+# bzlmod is the modern path (JAX, recent TF). A non-empty MODULE.bazel is
+# necessary but not sufficient: some repos (notably XLA) ship both files
+# and force legacy mode in .bazelrc with `common --noenable_bzlmod`, in
+# which case Bazel never reads MODULE.bazel and bzlmod-style wiring there
+# silently does nothing (the build fails with "Repository
+# '@@hedron_compile_commands' is not defined"). Trust .bazelrc when it
+# disables bzlmod unconditionally.
+USE_BZLMOD=0
 if [ -s "$ROOT/MODULE.bazel" ]; then
+    USE_BZLMOD=1
+    if [ -f "$ROOT/.bazelrc" ] && \
+       awk '/^[[:space:]]*(common|build|run|test|query|fetch|info|aquery|cquery)[[:space:]]/ && /--noenable_bzlmod/ { found=1 } END { exit !found }' "$ROOT/.bazelrc"; then
+        USE_BZLMOD=0
+        echo "==> .bazelrc disables bzlmod unconditionally; using WORKSPACE wiring"
+    fi
+fi
+if [ "$USE_BZLMOD" = "1" ]; then
     TARGET_FILE="$ROOT/MODULE.bazel"
     BLOCK_BODY=$(cat <<EOF
 # Wires hedronvision/bazel-compile-commands-extractor (clangd index source).
@@ -756,6 +777,18 @@ echo "    basedpyright: $(basedpyright --version 2>/dev/null || echo unknown)"
 if npm ls -g --depth=0 pyright >/dev/null 2>&1; then
     echo "    Removing previously-installed pyright (replaced by basedpyright)"
     npm uninstall -g pyright >/dev/null 2>&1 || true
+fi
+
+# ---------- 6b. Claude Code CLI (global via npm) ----------
+# Anthropic's official CLI. Same npm-global story as basedpyright, so we
+# piggyback on Node 20+ from section 2. Re-running just upgrades to the
+# latest published version.
+if [ "$INSTALL_CLAUDE" = "1" ]; then
+    echo "==> Installing/updating Claude Code via 'npm i -g @anthropic-ai/claude-code'"
+    npm install -g @anthropic-ai/claude-code >/dev/null
+    echo "    claude: $(claude --version 2>/dev/null || echo unknown)"
+else
+    echo "==> INSTALL_CLAUDE=0; skipping Claude Code CLI install"
 fi
 
 # ---------- 7. nvim Python venv (for molten-nvim + jupyter) ----------
@@ -1039,6 +1072,12 @@ else
     BAZEL_HELPER_STATUS="(skipped: INSTALL_BAZEL_HELPER=$INSTALL_BAZEL_HELPER)"
 fi
 
+if [ "$INSTALL_CLAUDE" = "1" ]; then
+    CLAUDE_STATUS="$(claude --version 2>/dev/null || echo missing)"
+else
+    CLAUDE_STATUS="(skipped: INSTALL_CLAUDE=0)"
+fi
+
 echo
 echo "==> Done."
 printf "    %-13s %s\n" "os:"           "$OS"
@@ -1049,6 +1088,7 @@ printf "    %-13s %s\n" "basedpyright:" "$(basedpyright --version 2>/dev/null ||
 printf "    %-13s %s\n" "fzf:"          "$("$USER_HOME/.fzf/bin/fzf" --version 2>/dev/null || echo missing)"
 printf "    %-13s %s\n" "venv:"         "$NVIM_VENV ($("$NVIM_VENV/bin/python" --version 2>/dev/null || echo missing))"
 printf "    %-13s %s\n" "bazel helper:" "$BAZEL_HELPER_STATUS"
+printf "    %-13s %s\n" "claude:"       "$CLAUDE_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
