@@ -78,6 +78,10 @@
 #     - gh (GitHub CLI). Linux: cli.github.com is added as a persistent apt
 #         source (every future 'apt update' will hit it) and gh is installed
 #         from there. macOS: 'brew install gh'. Skipped if INSTALL_GH=0.
+#     - Bitwarden CLI ('bw'). Linux: 'npm i -g @bitwarden/cli'. macOS:
+#         'brew install bitwarden-cli'. Pairs with chezmoi (chezmoi's
+#         `bitwarden` template function shells out to it). Skipped if
+#         INSTALL_BW=0.
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -123,6 +127,9 @@
 #   INSTALL_GH=0        Skip installing the GitHub CLI (`gh`). Default ON.
 #                         Linux: adds cli.github.com as a persistent apt
 #                         source. macOS: 'brew install gh'.
+#   INSTALL_BW=0        Skip installing the Bitwarden CLI (`bw`). Default ON.
+#                         Linux: 'npm i -g @bitwarden/cli'. macOS:
+#                         'brew install bitwarden-cli'.
 #
 # To uninstall the apt sources later (Linux; clangd-18 / gh binaries remain):
 #   sudo rm /etc/apt/sources.list.d/llvm-18.list /etc/apt/keyrings/llvm.gpg
@@ -137,6 +144,7 @@ INSTALL_BAZEL_HELPER="${INSTALL_BAZEL_HELPER:-1}"
 INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"
 INSTALL_CHEZMOI="${INSTALL_CHEZMOI:-1}"
 INSTALL_GH="${INSTALL_GH:-1}"
+INSTALL_BW="${INSTALL_BW:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -808,6 +816,30 @@ else
     echo "==> INSTALL_GH=0; skipping gh install"
 fi
 
+# ---------- 6e. Bitwarden CLI (bw) ----------
+# Pairs with chezmoi: chezmoi's `bitwarden` template function shells out to
+# `bw` to fetch secrets out of the vault at apply time, so dotfiles can pull
+# SSH keys / API tokens without committing them. Linux installs via npm
+# (Node 20 is already in place from section 2); macOS uses brew. Re-running
+# upgrades to the latest published version on Linux; brew is gated on
+# 'brew list' so we don't gratuitously upgrade a pinned version.
+if [ "$INSTALL_BW" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        echo "==> Installing/updating Bitwarden CLI via 'npm i -g @bitwarden/cli'"
+        npm install -g @bitwarden/cli >/dev/null
+        echo "    bw: $(bw --version 2>/dev/null || echo unknown)"
+    else
+        if brew list --formula bitwarden-cli >/dev/null 2>&1; then
+            echo "==> Bitwarden CLI already installed via brew"
+        else
+            echo "==> Installing Bitwarden CLI via brew"
+            brew install bitwarden-cli
+        fi
+    fi
+else
+    echo "==> INSTALL_BW=0; skipping Bitwarden CLI install"
+fi
+
 # ---------- 7. nvim Python venv (for molten-nvim + jupyter) ----------
 NVIM_VENV="$USER_HOME/.local/share/nvim-venv"
 if [ ! -d "$NVIM_VENV" ]; then
@@ -862,6 +894,12 @@ else
     GH_STATUS="(skipped: INSTALL_GH=0)"
 fi
 
+if [ "$INSTALL_BW" = "1" ]; then
+    BW_STATUS="$(bw --version 2>/dev/null || echo missing)"
+else
+    BW_STATUS="(skipped: INSTALL_BW=0)"
+fi
+
 echo
 echo "==> Done."
 printf "    %-13s %s\n" "os:"           "$OS"
@@ -875,6 +913,7 @@ printf "    %-13s %s\n" "bazel helper:" "$BAZEL_HELPER_STATUS"
 printf "    %-13s %s\n" "claude:"       "$CLAUDE_STATUS"
 printf "    %-13s %s\n" "chezmoi:"      "$CHEZMOI_STATUS"
 printf "    %-13s %s\n" "gh:"           "$GH_STATUS"
+printf "    %-13s %s\n" "bw:"           "$BW_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
@@ -886,7 +925,7 @@ if [ "$OS" = "linux" ]; then
         echo "    /etc/apt/keyrings/githubcli-archive-keyring.gpg"
     fi
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh"
+    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"
@@ -919,4 +958,46 @@ if [ "$INSTALL_BAZEL_HELPER" = "1" ]; then
     echo "     10-30 min; subsequent runs are minutes. Pass scoped targets like"
     echo "     '//xla/...' to limit extraction. 'bazel-compile-commands --clean'"
     echo "     reverts the per-repo wiring."
+fi
+
+# ---------- post-install: optional interactive bootstrap ----------
+# Offer to run the two follow-ups that almost always come right after this
+# script: cloning the chezmoi dotfile source, and pointing the Bitwarden CLI
+# at the user's vault server. Both are skipped silently when stdin isn't a
+# TTY (curl|bash flows, CI, etc.) so re-runs from automation don't block.
+if [ -t 0 ] && [ -t 1 ]; then
+    if [ "$INSTALL_CHEZMOI" = "1" ] && command -v chezmoi >/dev/null 2>&1; then
+        echo
+        if [ -d "$USER_HOME/.local/share/chezmoi" ]; then
+            echo "==> chezmoi source already exists at $USER_HOME/.local/share/chezmoi; skipping init prompt."
+            echo "    (Run 'chezmoi update' or 'chezmoi apply' from your shell to refresh.)"
+        else
+            printf "Run 'chezmoi init' now to clone your dotfile repo? [y/N] "
+            read -r ANSWER || ANSWER=""
+            if [[ "$ANSWER" =~ ^[Yy] ]]; then
+                printf "  Source repo (e.g. github-user, or git@github.com:user/dotfiles.git): "
+                read -r CHEZMOI_REPO || CHEZMOI_REPO=""
+                if [ -n "$CHEZMOI_REPO" ]; then
+                    run_as_user chezmoi init --apply -- "$CHEZMOI_REPO"
+                else
+                    echo "    (empty repo; skipping)"
+                fi
+            fi
+        fi
+    fi
+
+    if [ "$INSTALL_BW" = "1" ] && command -v bw >/dev/null 2>&1; then
+        echo
+        printf "Configure Bitwarden CLI server URL now? [y/N] "
+        read -r ANSWER || ANSWER=""
+        if [[ "$ANSWER" =~ ^[Yy] ]]; then
+            printf "  Server URL [default: https://vault.bitwarden.com]: "
+            read -r BW_SERVER || BW_SERVER=""
+            BW_SERVER="${BW_SERVER:-https://vault.bitwarden.com}"
+            run_as_user bw config server "$BW_SERVER" || \
+                echo "    (bw config server failed; you may already be logged in — run 'bw logout' first)"
+            echo "    Server set. Run 'bw login' from your shell to authenticate"
+            echo "    (intentionally not run here so the master password stays off this transcript)."
+        fi
+    fi
 fi
