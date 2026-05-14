@@ -33,7 +33,7 @@
 #
 #   Linux (Ubuntu/Debian, requires sudo):
 #     - apt packages: build deps, ripgrep, gnupg helpers, imagemagick,
-#         python3-venv / python3-pip / python3-dev
+#         python3-venv / python3-pip / python3-dev, tmux (if INSTALL_TMUX=1)
 #     - NodeSource apt repo + key (installed via 'curl | bash' from
 #         deb.nodesource.com — a remote script piped to root bash)
 #     - Node.js 20 from NodeSource (only if no Node >=20 is present)
@@ -51,9 +51,10 @@
 #
 #   macOS (Homebrew, runs as your user):
 #     - brew formulae installed if missing: neovim, node, ripgrep, ninja,
-#         cmake, gettext, imagemagick, llvm (for clangd), chezmoi, gh.
-#         Existing versions are left alone (the script does not 'brew
-#         upgrade'). chezmoi/gh are gated on their respective INSTALL_* flags.
+#         cmake, gettext, imagemagick, llvm (for clangd), chezmoi, gh,
+#         tmux, starship. Existing versions are left alone (the script does
+#         not 'brew upgrade'). chezmoi/gh/tmux/starship are gated on their
+#         respective INSTALL_* flags.
 #     - Symlink ~/.local/bin/clangd -> $(brew --prefix llvm)/bin/clangd
 #         (brew does not link llvm by default to avoid clobbering Apple's
 #         clang). Remove the symlink to undo.
@@ -82,6 +83,35 @@
 #         'brew install bitwarden-cli'. Pairs with chezmoi (chezmoi's
 #         `bitwarden` template function shells out to it). Skipped if
 #         INSTALL_BW=0.
+#     - tmux (terminal multiplexer with bottom status line). Linux: apt
+#         'tmux' + clipboard helpers ('xclip' for X11, 'wl-clipboard' for
+#         Wayland) so tmux copy-mode's 'y' lands in the system clipboard.
+#         macOS: 'brew install tmux' (pbcopy is built in). The chezmoi'd
+#         ~/.tmux.conf is expected to configure the status bar and (per
+#         CLAUDE.md) set 'set -gq allow-passthrough on' for image.nvim;
+#         it also enables 'set -s set-clipboard on' so OSC 52 puts copies
+#         on the system clipboard in modern terminals (kitty/wezterm/
+#         ghostty/iTerm2) without needing the helpers at all. The helpers
+#         are the fallback path for terminals that don't honor OSC 52
+#         (xterm, some VTE-based emulators). Skipped if INSTALL_TMUX=0.
+#     - starship (cross-shell prompt with git branch / user / context).
+#         Linux: official sh.starship.rs installer drops a binary at
+#         /usr/local/bin/starship. macOS: 'brew install starship'. The
+#         chezmoi'd shell rc is expected to source it via
+#         'eval "$(starship init bash)"' (or zsh). Skipped if
+#         INSTALL_STARSHIP=0.
+#     - JetBrainsMono Nerd Font (provides the glyphs starship/lualine/
+#         tmux status icons use). macOS: 'brew install --cask
+#         font-jetbrains-mono-nerd-font' (system-wide via brew cask).
+#         Linux: downloads the official release zip from
+#         github.com/ryanoasis/nerd-fonts into
+#         ~/.local/share/fonts/JetBrainsMonoNerdFont/ and runs fc-cache
+#         (user-local, no apt repo). On Linux the install also pulls in
+#         'fontconfig' via apt so fc-cache is available. Idempotent: skips
+#         the download if any JetBrainsMonoNerdFont*.ttf already exists
+#         at the install path. Skipped if INSTALL_NERD_FONT=0. To actually
+#         see the icons, set your terminal emulator's font to a
+#         JetBrainsMono Nerd Font variant.
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -130,6 +160,25 @@
 #   INSTALL_BW=0        Skip installing the Bitwarden CLI (`bw`). Default ON.
 #                         Linux: 'npm i -g @bitwarden/cli'. macOS:
 #                         'brew install bitwarden-cli'.
+#   INSTALL_TMUX=0      Skip installing tmux. Default ON. Linux: apt 'tmux'.
+#                         macOS: 'brew install tmux'. The chezmoi'd
+#                         ~/.tmux.conf owns status-bar styling.
+#   INSTALL_STARSHIP=0  Skip installing starship (shell prompt). Default ON.
+#                         Linux: sh.starship.rs installer to /usr/local/bin.
+#                         macOS: 'brew install starship'. The chezmoi'd
+#                         shell rc must run 'eval "$(starship init <shell>)"'.
+#   INSTALL_NERD_FONT=0 Skip installing JetBrainsMono Nerd Font. Default ON.
+#                         Without a nerd font, the icons used by starship,
+#                         lualine, and the tmux status bar render as tofu.
+#                         Linux: ~/.local/share/fonts/. macOS: brew cask
+#                         (system-wide). Override font choice with
+#                         NERD_FONT_NAME (default: JetBrainsMono).
+#   NERD_FONT_NAME=...  Which nerd font to install when INSTALL_NERD_FONT=1.
+#                         Default: JetBrainsMono. Must match a release asset
+#                         name at github.com/ryanoasis/nerd-fonts/releases
+#                         (e.g. FiraCode, Hack, Meslo, Iosevka, CascadiaCode).
+#                         On macOS the brew cask is
+#                         'font-<lowercased>-nerd-font'.
 #
 # To uninstall the apt sources later (Linux; clangd-18 / gh binaries remain):
 #   sudo rm /etc/apt/sources.list.d/llvm-18.list /etc/apt/keyrings/llvm.gpg
@@ -145,6 +194,10 @@ INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"
 INSTALL_CHEZMOI="${INSTALL_CHEZMOI:-1}"
 INSTALL_GH="${INSTALL_GH:-1}"
 INSTALL_BW="${INSTALL_BW:-1}"
+INSTALL_TMUX="${INSTALL_TMUX:-1}"
+INSTALL_STARSHIP="${INSTALL_STARSHIP:-1}"
+INSTALL_NERD_FONT="${INSTALL_NERD_FONT:-1}"
+NERD_FONT_NAME="${NERD_FONT_NAME:-JetBrainsMono}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -868,6 +921,138 @@ else
     echo "==> INSTALL_BW=0; skipping Bitwarden CLI install"
 fi
 
+# ---------- 6f. tmux + clipboard helpers ----------
+# Installs the tmux binary plus the OS bridges tmux copy-mode needs to land
+# yanks on the system clipboard. The chezmoi'd ~/.tmux.conf carries the
+# status-bar styling, allow-passthrough for image.nvim, and
+# `set -s set-clipboard on` which makes OSC 52 put copies on the system
+# clipboard in modern terminals (kitty/wezterm/ghostty/iTerm2) — those
+# don't need the helpers at all. The helpers (xclip/wl-clipboard) are the
+# fallback for terminals that don't honor OSC 52 (stock xterm, some
+# VTE-based ones) and are what lets copy-mode `y` reach the clipboard
+# regardless. macOS has pbcopy built in.
+if [ "$INSTALL_TMUX" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        if ! command -v tmux >/dev/null 2>&1; then
+            echo "==> Installing tmux via apt"
+            apt-get install -y tmux
+        else
+            echo "==> tmux already installed: $(tmux -V 2>/dev/null)"
+        fi
+        # Clipboard helpers. xclip covers X11 and works under XWayland too;
+        # wl-clipboard is the native Wayland path. Installing both is cheap
+        # (~1MB combined) and means the same config works on either display
+        # server. Both are idempotent under apt.
+        echo "==> Installing clipboard helpers (xclip + wl-clipboard)"
+        apt-get install -y xclip wl-clipboard
+    else
+        if brew list --formula tmux >/dev/null 2>&1; then
+            echo "==> tmux already installed via brew"
+        else
+            echo "==> Installing tmux via brew"
+            brew install tmux
+        fi
+        # macOS: pbcopy/pbpaste are part of the OS, nothing to install.
+    fi
+else
+    echo "==> INSTALL_TMUX=0; skipping tmux install"
+fi
+
+# ---------- 6g. starship (shell prompt) ----------
+# Cross-shell prompt with git branch, user, host, language/runtime context,
+# etc. The chezmoi'd shell rc must run `eval "$(starship init bash)"`
+# (or zsh) to actually wire it in; this section just installs the binary.
+# Optional ~/.config/starship.toml for theming is also chezmoi's territory.
+#
+# Linux uses the official installer (https://starship.rs/install.sh) which
+# drops a single binary at /usr/local/bin/starship — no apt repo to maintain.
+# We pipe with `-y` so it doesn't prompt on re-runs. macOS uses brew.
+if [ "$INSTALL_STARSHIP" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        # Re-run unconditionally to pick up new releases; the installer's
+        # -y flag overwrites any existing /usr/local/bin/starship in place.
+        echo "==> Installing/updating starship to /usr/local/bin (via sh.starship.rs)"
+        curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/local/bin
+    else
+        if brew list --formula starship >/dev/null 2>&1; then
+            echo "==> starship already installed via brew"
+        else
+            echo "==> Installing starship via brew"
+            brew install starship
+        fi
+    fi
+else
+    echo "==> INSTALL_STARSHIP=0; skipping starship install"
+fi
+
+# ---------- 6h. Nerd Font (icons for starship/lualine/tmux status) ----------
+# Without a nerd font installed AND the terminal configured to use it, the
+# glyphs in starship's two-line preset and lualine render as tofu. Installing
+# the font is half the fix; the other half (terminal font setting) is on the
+# user — we can't reach into kitty/wezterm/iTerm2/ghostty preferences from a
+# shell script.
+#
+# Linux: pull the release zip from ryanoasis/nerd-fonts (user-local under
+# ~/.local/share/fonts/) and run fc-cache. fontconfig (which provides
+# fc-cache) is pulled in via apt if not already installed. We pin a release
+# tag rather than 'latest' so re-runs across machines land on the same
+# version, and the script doesn't randomly re-download when upstream
+# publishes a new release.
+#
+# macOS: brew cask installs system-wide; idempotent via `brew list --cask`.
+NERD_FONT_TAG="v3.4.0"
+
+if [ "$INSTALL_NERD_FONT" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        FONT_DIR="$USER_HOME/.local/share/fonts/${NERD_FONT_NAME}NerdFont"
+        # Detect prior install by looking for any .ttf with the font name —
+        # robust to upstream renaming individual files between releases.
+        if [ -d "$FONT_DIR" ] && ls "$FONT_DIR"/*.ttf >/dev/null 2>&1; then
+            echo "==> Nerd font ${NERD_FONT_NAME} already present at $FONT_DIR"
+        else
+            echo "==> Installing nerd font ${NERD_FONT_NAME} (${NERD_FONT_TAG}) to $FONT_DIR"
+            # fc-cache lives in fontconfig; ensure it's there.
+            if ! command -v fc-cache >/dev/null 2>&1; then
+                apt-get install -y fontconfig
+            fi
+            run_as_user mkdir -p "$FONT_DIR" "$USER_HOME/.cache"
+            # Stage the download under the target user's home rather than /tmp.
+            # mktemp under /tmp creates a 0700 root-owned dir when the script
+            # runs via sudo, and `run_as_user unzip ...` (which drops privs)
+            # then can't read inside it — unzip reports the file as missing
+            # because open() fails with EACCES before any extension probing.
+            FONT_TMP="$(run_as_user mktemp -d "$USER_HOME/.cache/nerd-font.XXXXXX")"
+            FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/download/${NERD_FONT_TAG}/${NERD_FONT_NAME}.zip"
+            if run_as_user curl -fsSL --retry 3 -o "$FONT_TMP/font.zip" "$FONT_URL"; then
+                # -o overwrite, -q quiet. Limit to .ttf so we don't litter
+                # the install dir with readmes and license copies.
+                run_as_user unzip -oq "$FONT_TMP/font.zip" '*.ttf' -d "$FONT_DIR"
+                run_as_user fc-cache -f "$FONT_DIR" >/dev/null
+                echo "    installed $(ls "$FONT_DIR"/*.ttf 2>/dev/null | wc -l) .ttf files"
+            else
+                echo "    WARNING: failed to download $FONT_URL; skipping font install"
+                echo "             (check NERD_FONT_NAME — must match a release asset name)"
+            fi
+            run_as_user rm -rf "$FONT_TMP"
+        fi
+    else
+        # Map e.g. JetBrainsMono -> font-jetbrains-mono-nerd-font. Brew
+        # cask names are kebab-cased lowercase with -nerd-font suffix.
+        FONT_CASK="font-$(echo "$NERD_FONT_NAME" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')-nerd-font"
+        if brew list --cask "$FONT_CASK" >/dev/null 2>&1; then
+            echo "==> Nerd font cask $FONT_CASK already installed"
+        else
+            echo "==> Installing nerd font cask $FONT_CASK"
+            if ! brew install --cask "$FONT_CASK"; then
+                echo "    WARNING: brew install --cask $FONT_CASK failed"
+                echo "             (check NERD_FONT_NAME — see 'brew search font-*-nerd-font')"
+            fi
+        fi
+    fi
+else
+    echo "==> INSTALL_NERD_FONT=0; skipping nerd font install"
+fi
+
 # ---------- 7. nvim Python venv (for molten-nvim + jupyter) ----------
 NVIM_VENV="$USER_HOME/.local/share/nvim-venv"
 if [ ! -d "$NVIM_VENV" ]; then
@@ -928,6 +1113,38 @@ else
     BW_STATUS="(skipped: INSTALL_BW=0)"
 fi
 
+if [ "$INSTALL_TMUX" = "1" ]; then
+    TMUX_STATUS="$(tmux -V 2>/dev/null || echo missing)"
+else
+    TMUX_STATUS="(skipped: INSTALL_TMUX=0)"
+fi
+
+if [ "$INSTALL_STARSHIP" = "1" ]; then
+    STARSHIP_STATUS="$(starship --version 2>/dev/null | head -1 || echo missing)"
+else
+    STARSHIP_STATUS="(skipped: INSTALL_STARSHIP=0)"
+fi
+
+if [ "$INSTALL_NERD_FONT" = "1" ]; then
+    if [ "$OS" = "linux" ]; then
+        FONT_DIR="$USER_HOME/.local/share/fonts/${NERD_FONT_NAME}NerdFont"
+        if [ -d "$FONT_DIR" ] && ls "$FONT_DIR"/*.ttf >/dev/null 2>&1; then
+            NERD_FONT_STATUS="${NERD_FONT_NAME} ($(ls "$FONT_DIR"/*.ttf | wc -l) ttf in $FONT_DIR)"
+        else
+            NERD_FONT_STATUS="missing (download likely failed; see log above)"
+        fi
+    else
+        FONT_CASK="font-$(echo "$NERD_FONT_NAME" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]')-nerd-font"
+        if brew list --cask "$FONT_CASK" >/dev/null 2>&1; then
+            NERD_FONT_STATUS="${NERD_FONT_NAME} (brew cask $FONT_CASK)"
+        else
+            NERD_FONT_STATUS="missing (brew cask $FONT_CASK not installed)"
+        fi
+    fi
+else
+    NERD_FONT_STATUS="(skipped: INSTALL_NERD_FONT=0)"
+fi
+
 echo
 echo "==> Done."
 printf "    %-13s %s\n" "os:"           "$OS"
@@ -942,6 +1159,9 @@ printf "    %-13s %s\n" "claude:"       "$CLAUDE_STATUS"
 printf "    %-13s %s\n" "chezmoi:"      "$CHEZMOI_STATUS"
 printf "    %-13s %s\n" "gh:"           "$GH_STATUS"
 printf "    %-13s %s\n" "bw:"           "$BW_STATUS"
+printf "    %-13s %s\n" "tmux:"         "$TMUX_STATUS"
+printf "    %-13s %s\n" "starship:"     "$STARSHIP_STATUS"
+printf "    %-13s %s\n" "nerd font:"    "$NERD_FONT_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
@@ -953,7 +1173,7 @@ if [ "$OS" = "linux" ]; then
         echo "    /etc/apt/keyrings/githubcli-archive-keyring.gpg"
     fi
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli"
+    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli tmux starship"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"
@@ -979,6 +1199,12 @@ echo "     style buffer; <leader>mi starts a kernel, <leader>ml evaluates."
 echo "  4. Image rendering needs a graphics-capable terminal (kitty,"
 echo "     wezterm, ghostty; on macOS iTerm2 also works). In other"
 echo "     terminals molten text output still works; plots just don't render."
+if [ "$INSTALL_NERD_FONT" = "1" ]; then
+    echo "  4a. Set your terminal emulator's font to '${NERD_FONT_NAME} Nerd Font'"
+    echo "      (kitty: font_family in kitty.conf; ghostty/wezterm: their config files;"
+    echo "      iTerm2/Terminal.app: Preferences > Profiles > Text). Otherwise"
+    echo "      starship/lualine/tmux icons render as tofu."
+fi
 if [ "$INSTALL_BAZEL_HELPER" = "1" ]; then
     echo "  5. For C++ in a Bazel repo (XLA, jaxlib, TF), cd into the workspace and"
     echo "     run 'bazel-compile-commands' once — this generates compile_commands.json"
