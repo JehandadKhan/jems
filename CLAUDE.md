@@ -61,7 +61,17 @@ Don't break these without updating both sides:
   via a Bazel `local_path_override`, so it has no network deps at run time.
   It writes a fenced managed block into the Bazel workspace's
   `MODULE.bazel`/`WORKSPACE`, plus `tools/clangd/BUILD.bazel`. None of
-  those paths are dotfiles, so they belong here, not in chezmoi.
+  those paths are dotfiles, so they belong here, not in chezmoi. The
+  install script also patches the local hedron clone's
+  `refresh_compile_commands.bzl` to load `py_binary` from `@rules_python`
+  rather than calling `native.py_binary`. Without this, WORKSPACE-mode
+  workspaces (notably XLA, which pins `common --noenable_bzlmod`) route
+  hedron's macro to Bazel's built-in py_binary, which can't substitute
+  rules_python's bash bootstrap placeholders (`%interpreter_args%` etc.)
+  and the launcher dies trying to exec a literal `%interpreter_args%`
+  path. See hedron issue #168. The patch is idempotent and re-applied
+  on every `install-lazyvim.sh` run, so a `git pull` of hedron that
+  reverts it gets re-fixed.
 - Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
   (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.

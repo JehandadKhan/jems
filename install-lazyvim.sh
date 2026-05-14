@@ -427,6 +427,34 @@ if [ "$INSTALL_BAZEL_HELPER" = "1" ]; then
             "$HEDRON_DIR"
     fi
 
+    # Patch hedron's refresh_compile_commands.bzl to load py_binary from
+    # rules_python instead of calling native.py_binary. In WORKSPACE-mode
+    # workspaces (XLA pins `common --noenable_bzlmod`), `native.py_binary`
+    # routes to Bazel's built-in Java-side py_binary rather than the
+    # rules_python autoloaded one. Bazel then renders rules_python's bash
+    # bootstrap template with its own substitution dict and leaves
+    # rules_python-specific placeholders (%interpreter_args%,
+    # %stage2_bootstrap%, %recreate_venv_at_runtime%, ...) literal — the
+    # launcher then tries to exec '%interpreter_args%' as a Python file
+    # path and dies with `[Errno 2] No such file or directory`. See
+    # https://github.com/hedronvision/bazel-compile-commands-extractor/issues/168
+    # for the upstream issue. Re-run-safe: the Python script is idempotent.
+    HEDRON_BZL="$HEDRON_DIR/refresh_compile_commands.bzl"
+    if [ -f "$HEDRON_BZL" ]; then
+        echo "==> Patching $HEDRON_BZL to use rules_python's py_binary"
+        run_as_user python3 - "$HEDRON_BZL" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+load_line = 'load("@rules_python//python:defs.bzl", "py_binary")'
+anchor = 'load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")'
+if load_line not in src and anchor in src:
+    src = src.replace(anchor, anchor + "\n" + load_line, 1)
+src = src.replace("native.py_binary(", "py_binary(")
+p.write_text(src)
+PY
+    fi
+
     echo "==> Writing $HELPER_BIN"
     run_as_user mkdir -p "$USER_HOME/.local/bin"
     # Outer heredoc uses HELPER_EOF so the inner shell heredocs in the helper
