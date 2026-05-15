@@ -1,16 +1,38 @@
 # jems — repo notes for Claude
 
-This repo is a single-file Bash installer (`install-lazyvim.sh`) that sets up
-the **prerequisites** for a Neovim + LazyVim + Jupyter notebook stack on a
-fresh Ubuntu/WSL2 box or a fresh macOS (14+, Apple Silicon or Intel) box.
-"Prerequisites" means anything that is not a dotfile: apt/brew packages, the
-nvim binary, Node.js, clangd, basedpyright, the Claude Code CLI, fzf
-binaries, the Python venv that molten-nvim depends on, the
-hedronvision/bazel-compile-commands-extractor clone + helper, and a couple of
-environment-specific symlinks under `~/.local/bin`. Linux uses apt + a
-from-source nvim build and runs under `sudo`; macOS uses Homebrew and runs as
-the user (brew refuses sudo). The OS is detected via `uname -s` at the top
-and platform-specific blocks branch on `$OS` (`linux` | `macos`).
+This repo is a Bash installer that sets up the **prerequisites** for a
+Neovim + LazyVim + Jupyter notebook stack on a fresh Ubuntu/WSL2 box or a
+fresh macOS (14+, Apple Silicon or Intel) box. "Prerequisites" means
+anything that is not a dotfile: apt/brew packages, the nvim binary,
+Node.js, clangd, basedpyright, the Claude Code CLI, fzf binaries, the
+Python venv that molten-nvim depends on, the
+hedronvision/bazel-compile-commands-extractor clone + helper, and a couple
+of environment-specific symlinks under `~/.local/bin`. Linux uses apt + a
+from-source nvim build and runs under `sudo`; macOS uses Homebrew and runs
+as the user (brew refuses sudo). The OS is detected via `uname -s` at the
+top and platform-specific blocks branch on `$OS` (`linux` | `macos`).
+
+## Layout
+- `install.sh` is the **driver**: env-var toggles, OS detect, preflight,
+  `run_as_user`, helpers (`brew_install_if_missing`, `nvim_version_ok`,
+  `nerd_font_cask`), shared path constants (`NVIM_VENV`, `HEDRON_DIR`,
+  `HELPER_BIN`), the final summary, and the comment block enumerating every
+  persistent system change. Anything reused by more than one step belongs
+  here, not in a subscript.
+- `install.d/NN-<step>.sh` — one file per install step (system prereqs,
+  node, nvim, fzf, clangd, bazel helper, basedpyright, claude, chezmoi, gh,
+  bw, tmux, starship, nerd-font, nvim-venv, and the interactive bootstrap
+  prompts at `99-`). Subscripts are **sourced**, not exec'd, so they
+  inherit the driver's variables and helpers. Numeric prefix is also the
+  run order — node before anything that shells out to npm, nvim before the
+  vim/vi symlinks, etc.
+- `install.d/files/bazel-compile-commands` — the runtime helper installed
+  to `~/.local/bin/bazel-compile-commands`. Edited as a real script (not a
+  heredoc) so syntax highlighting and shellcheck work; the bazel-helper
+  step `install -m 0755`'s it into place.
+- Hard rule: **at most two levels of scripts** (`install.sh` →
+  `install.d/*.sh`). Subscripts must not source other subscripts. If a
+  helper is reused, lift it into `install.sh`.
 
 ## Out of scope: dotfiles
 
@@ -70,16 +92,17 @@ Don't break these without updating both sides:
   rules_python's bash bootstrap placeholders (`%interpreter_args%` etc.)
   and the launcher dies trying to exec a literal `%interpreter_args%`
   path. See hedron issue #168. The patch is idempotent and re-applied
-  on every `install-lazyvim.sh` run, so a `git pull` of hedron that
-  reverts it gets re-fixed.
+  on every `install.sh` run, so a `git pull` of hedron that reverts it
+  gets re-fixed.
 - Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
   (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.
 
 ## Single source of truth
-Everything install-side lives in `install-lazyvim.sh`. There is no Ansible,
-no Makefile. If you find yourself wanting to add a second file, push back
-— keep the install path one curl-able script.
+Everything install-side lives under `install.sh` + `install.d/`. There is
+no Ansible, no Makefile, no nested install directories. The two-level
+limit (driver → step) is intentional; if you find yourself wanting a
+third level, lift the shared code into `install.sh` instead.
 
 ## Re-run contract
 The script is designed to be run repeatedly on the same box:
@@ -102,15 +125,17 @@ The script is designed to be run repeatedly on the same box:
   into `$USER_HOME` should go through `run_as_user` even though it's a
   no-op on macOS — that's how we keep the Linux path correct without
   branching at every call site.
-- Comments at the top of the script enumerate every persistent system
+- Comments at the top of `install.sh` enumerate every persistent system
   change per OS (apt sources, brew formulae, symlinks, alternatives) and
-  how to undo them. Keep that list accurate when you add steps.
+  how to undo them. Keep that list accurate when you add steps — it lives
+  in the driver, not the per-step files.
 
 ## Testing changes
 There is no CI. Validate with:
 ```
-bash -n install-lazyvim.sh        # syntax
-shellcheck install-lazyvim.sh     # if available
+bash -n install.sh                          # syntax
+for f in install.d/*.sh; do bash -n "$f"; done
+shellcheck install.sh install.d/*.sh install.d/files/* 2>/dev/null  # if available
 ```
 For end-to-end testing on Linux, the cheap path is a throwaway WSL distro
 or a Docker container running Ubuntu 22.04 — the Linux path is destructive

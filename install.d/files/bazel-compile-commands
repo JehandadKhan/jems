@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# bazel-compile-commands — wire hedronvision/bazel-compile-commands-extractor
+# into a Bazel workspace and produce compile_commands.json at the repo root,
+# so clangd gives accurate cross-references / completion in C/C++.
+#
+# Installed by install.sh (jems). The extractor itself lives at
+# ~/.local/share/bazel-compile-commands-extractor (cloned at install time);
+# this helper references it via a Bazel local_path_override, so no network
+# is needed at run time.
+#
+# Usage:
+#   bazel-compile-commands [--clean] [REPO_ROOT] [TARGETS...]
+#
+# Arguments (all optional):
+#   REPO_ROOT  Path to the Bazel workspace. If omitted, walks up from PWD
+#              looking for MODULE.bazel / WORKSPACE.
+#   TARGETS    One or more Bazel labels (e.g. //xla/...). Defaults to //...
+#              if omitted. Scope this if //... is too broad for your repo.
+#
+# Flags:
+#   --clean    Remove the managed MODULE.bazel/WORKSPACE block and the
+#              tools/clangd/ dir this helper added. Leaves
+#              compile_commands.json in place.
+#   --help     Show this message.
+#
+# Notes:
+# - First run on a large repo (XLA: 6k+ files) takes 10-30 min while bazel
+#   resolves and extracts. Subsequent runs are minutes.
+# - Idempotent: re-running refreshes compile_commands.json against current
+#   BUILD/source state. Source-only changes don't need a re-run.
+
+set -euo pipefail
+
+HEDRON_DIR="${HEDRON_DIR:-$HOME/.local/share/bazel-compile-commands-extractor}"
+BLOCK_BEGIN="# >>> bazel-compile-commands managed block (do not edit between markers)"
+BLOCK_END="# <<< bazel-compile-commands managed block"
+
+usage() {
+    cat <<'EOF'
+Usage: bazel-compile-commands [--clean] [REPO_ROOT] [TARGETS...]
+
+Generates compile_commands.json for a Bazel workspace via hedronvision/
+bazel-compile-commands-extractor, so clangd gets accurate flags.
+
+  REPO_ROOT  Bazel workspace path. Defaults to the workspace enclosing PWD.
+  TARGETS    Bazel labels to extract. Defaults to //... (scope with e.g.
+             //xla/... to skip third_party).
+
+  --clean    Remove the managed MODULE.bazel/WORKSPACE block and tools/clangd/
+             dir this helper added. compile_commands.json is left in place.
+  --help     Show this help.
+
+First run on a big repo (XLA, TF) takes 10-30 min. Re-run after BUILD changes.
+EOF
+}
+
+CLEAN=0
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    --clean)   CLEAN=1; shift ;;
+esac
+
+# Resolve repo root: explicit arg if it looks like a Bazel workspace,
+# otherwise walk up from PWD looking for MODULE.bazel / WORKSPACE.
+ROOT=""
+if [ "${1:-}" ] && [ -d "${1:-}" ] && \
+   { [ -f "$1/MODULE.bazel" ] || [ -f "$1/WORKSPACE" ] || [ -f "$1/WORKSPACE.bazel" ]; }; then
+    ROOT="$(cd "$1" && pwd)"
+    shift
+else
+    cur="$PWD"
+    while [ "$cur" != "/" ]; do
+        if [ -f "$cur/MODULE.bazel" ] || [ -f "$cur/WORKSPACE" ] || [ -f "$cur/WORKSPACE.bazel" ]; then
+            ROOT="$cur"
+            break
+        fi
+        cur="$(dirname "$cur")"
+    done
+fi
+if [ -z "$ROOT" ]; then
+    echo "error: no Bazel workspace found (need MODULE.bazel or WORKSPACE in PWD or an ancestor)" >&2
+    exit 1
+fi
+echo "==> Bazel workspace: $ROOT"
+
+# Strip our fenced block (if any) from a file, in place.
+strip_block() {
+    local path="$1"
+    [ -f "$path" ] || return 0
+    local tmp; tmp="$(mktemp)"
+    awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '
+        index($0, b) == 1 { skip=1; next }
+        index($0, e) == 1 && skip { skip=0; next }
+        !skip { print }
+    ' "$path" > "$tmp"
+    mv "$tmp" "$path"
+}
+
+if [ "$CLEAN" = "1" ]; then
+    echo "==> Cleaning bazel-compile-commands wiring from $ROOT"
+    [ -f "$ROOT/MODULE.bazel" ]    && strip_block "$ROOT/MODULE.bazel"
+    [ -f "$ROOT/WORKSPACE" ]       && strip_block "$ROOT/WORKSPACE"
+    [ -f "$ROOT/WORKSPACE.bazel" ] && strip_block "$ROOT/WORKSPACE.bazel"
+    rm -rf "$ROOT/tools/clangd"
+    echo "    Removed managed blocks and $ROOT/tools/clangd."
+    echo "    (compile_commands.json left in place; delete it manually if you want.)"
+    exit 0
+fi
+
+# Verify the extractor is locally available (cloned by install.sh).
+if [ ! -f "$HEDRON_DIR/MODULE.bazel" ] && [ ! -f "$HEDRON_DIR/WORKSPACE" ]; then
+    echo "error: hedron extractor not found at $HEDRON_DIR" >&2
+    echo "       re-run install.sh with INSTALL_BAZEL_HELPER=1 (the default)," >&2
+    echo "       or git clone the repo manually:" >&2
+    echo "         git clone https://github.com/hedronvision/bazel-compile-commands-extractor.git $HEDRON_DIR" >&2
+    exit 1
+fi
+
+# bazelisk preferred (handles .bazelversion); fall back to bazel.
+if command -v bazelisk >/dev/null 2>&1; then BAZEL=bazelisk
+elif command -v bazel >/dev/null 2>&1; then BAZEL=bazel
+else
+    echo "error: 'bazel' or 'bazelisk' not found on PATH" >&2
+    echo "       install one (e.g. via your distro's package manager, brew, or" >&2
+    echo "       https://github.com/bazelbuild/bazelisk/releases) and re-run." >&2
+    exit 1
+fi
+
+# Targets default to //... (everything reachable). Pass scoped labels (e.g.
+# //xla/...) to skip third_party or unbuildable corners.
+if [ "$#" -gt 0 ]; then
+    TARGETS=("$@")
+else
+    TARGETS=("//...")
+fi
+
+# bzlmod is the modern path (JAX, recent TF). A non-empty MODULE.bazel is
+# necessary but not sufficient: some repos (notably XLA) ship both files
+# and force legacy mode in .bazelrc with `common --noenable_bzlmod`, in
+# which case Bazel never reads MODULE.bazel and bzlmod-style wiring there
+# silently does nothing (the build fails with "Repository
+# '@@hedron_compile_commands' is not defined"). Trust .bazelrc when it
+# disables bzlmod unconditionally.
+USE_BZLMOD=0
+if [ -s "$ROOT/MODULE.bazel" ]; then
+    USE_BZLMOD=1
+    if [ -f "$ROOT/.bazelrc" ] && \
+       awk '/^[[:space:]]*(common|build|run|test|query|fetch|info|aquery|cquery)[[:space:]]/ && /--noenable_bzlmod/ { found=1 } END { exit !found }' "$ROOT/.bazelrc"; then
+        USE_BZLMOD=0
+        echo "==> .bazelrc disables bzlmod unconditionally; using WORKSPACE wiring"
+    fi
+fi
+if [ "$USE_BZLMOD" = "1" ]; then
+    TARGET_FILE="$ROOT/MODULE.bazel"
+    BLOCK_BODY=$(cat <<EOF
+# Wires hedronvision/bazel-compile-commands-extractor (clangd index source).
+# Path points at this machine's local clone — re-run install.sh to
+# refresh hedron itself. dev_dependency keeps it invisible to downstream
+# MODULE consumers.
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+local_path_override(
+    module_name = "hedron_compile_commands",
+    path = "$HEDRON_DIR",
+)
+EOF
+)
+elif [ -f "$ROOT/WORKSPACE" ] || [ -f "$ROOT/WORKSPACE.bazel" ]; then
+    [ -f "$ROOT/WORKSPACE.bazel" ] && TARGET_FILE="$ROOT/WORKSPACE.bazel" || TARGET_FILE="$ROOT/WORKSPACE"
+    BLOCK_BODY=$(cat <<EOF
+# hedronvision/bazel-compile-commands-extractor (legacy WORKSPACE wiring).
+local_repository(
+    name = "hedron_compile_commands",
+    path = "$HEDRON_DIR",
+)
+load("@hedron_compile_commands//:workspace_setup.bzl", "hedron_compile_commands_setup")
+hedron_compile_commands_setup()
+EOF
+)
+else
+    echo "error: workspace at $ROOT has neither MODULE.bazel nor WORKSPACE" >&2
+    exit 1
+fi
+
+# Idempotent rewrite: strip any prior block, then append the current one.
+strip_block "$TARGET_FILE"
+{ printf '\n%s\n%s\n%s\n' "$BLOCK_BEGIN" "$BLOCK_BODY" "$BLOCK_END"; } >> "$TARGET_FILE"
+echo "==> Wrote managed block to $(basename "$TARGET_FILE")"
+
+# tools/clangd/BUILD.bazel: refresh target with user-supplied target scope.
+mkdir -p "$ROOT/tools/clangd"
+{
+    printf '# Generated by bazel-compile-commands (jems install.sh).\n'
+    printf '# Re-run the helper to refresh after BUILD changes.\n'
+    printf 'load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")\n\n'
+    printf 'refresh_compile_commands(\n'
+    printf '    name = "refresh_compile_commands",\n'
+    printf '    targets = {\n'
+    for t in "${TARGETS[@]}"; do
+        printf '        "%s": "",\n' "$t"
+    done
+    printf '    },\n)\n'
+} > "$ROOT/tools/clangd/BUILD.bazel"
+echo "==> Wrote $ROOT/tools/clangd/BUILD.bazel (targets: ${TARGETS[*]})"
+
+# Keep generated artifacts out of `git status`. .git/info/exclude is the
+# right place for this — it's local, untracked, and doesn't fight upstream
+# .gitignore. We avoid touching MODULE.bazel/WORKSPACE here since those
+# files are tracked; the managed block is what the user reverts before
+# upstreaming.
+if [ -d "$ROOT/.git" ]; then
+    install -d -m 0755 "$ROOT/.git/info"
+    EXCLUDE="$ROOT/.git/info/exclude"
+    [ -f "$EXCLUDE" ] || : > "$EXCLUDE"
+    for path in compile_commands.json external/ tools/clangd/; do
+        grep -qxF "$path" "$EXCLUDE" || echo "$path" >> "$EXCLUDE"
+    done
+fi
+
+# Run the refresh. cd into the repo so bazel finds the workspace and writes
+# compile_commands.json at the right root.
+echo "==> $BAZEL run //tools/clangd:refresh_compile_commands"
+echo "    (first run on a large repo can take 10-30 min)"
+( cd "$ROOT" && "$BAZEL" run //tools/clangd:refresh_compile_commands )
+
+if [ ! -f "$ROOT/compile_commands.json" ]; then
+    echo "error: bazel ran but compile_commands.json was not produced at $ROOT" >&2
+    echo "       check the bazel output above; common causes: target scope is" >&2
+    echo "       unbuildable, or hedron's actions failed for a specific rule." >&2
+    exit 1
+fi
+
+# Normalize joined include flags. Some Bazel CC toolchains (notably XLA's
+# rules_ml_toolchain) declare include flag_groups as `flags = ["-isystem
+# %{path}"]` rather than `flags = ["-isystem", "%{path}"]`. Both produce
+# the same final compile invocation because Bazel space-joins flags
+# anyway, but `bazel aquery` (which hedron consumes) returns whichever
+# token shape the toolchain handed it. The joined form lands in
+# compile_commands.json as a single "-isystem /path" arg, which clang
+# parses as `-isystem ` followed by a path with a literal leading space
+# — silently ignored as nonexistent. The resulting JSON looks fine but
+# clangd can't find <tuple> et al. We split joined include tokens here
+# so the JSON is correct regardless of toolchain quirks. Drop this once
+# https://github.com/hedronvision/bazel-compile-commands-extractor lands
+# the same fix upstream.
+python3 - "$ROOT/compile_commands.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p) as f:
+    db = json.load(f)
+joined = ('-isystem ', '-iquote ', '-I ', '-isysroot ', '-imacros ', '-include ', '-Xclang ')
+n = 0
+for e in db:
+    args = e.get('arguments')
+    if not args:
+        continue
+    new = []
+    for a in args:
+        if a.startswith(joined):
+            flag, _, rest = a.partition(' ')
+            if rest:
+                new.append(flag); new.append(rest); n += 1
+                continue
+        new.append(a)
+    e['arguments'] = new
+with open(p, 'w') as f:
+    json.dump(db, f, indent=2)
+print(f'==> normalized {n} joined include flags')
+PY
+
+N="$(grep -c '"file":' "$ROOT/compile_commands.json" 2>/dev/null || echo 0)"
+echo "==> Wrote $ROOT/compile_commands.json ($N entries)"
+echo "    clangd will pick this up automatically on next nvim launch."
