@@ -17,10 +17,37 @@ This writes a Bazel rc file that subsequent `bazel` commands pick up automatical
 ## 2. Build everything (tests + tools + libs)
 
 ```sh
-bazel build --spawn_strategy=sandboxed //xla/...
+bazel build //xla/...
 ```
 
 `//xla/...` is the wildcard for every target under `xla/`. First build takes a long time (LLVM + MLIR + StableHLO).
+
+### A note on `--spawn_strategy=sandboxed`
+
+The XLA docs suggest `--spawn_strategy=sandboxed`, but on hosts where the Linux sandbox can't run every action (older kernels, restricted user namespaces, AppArmor policies on Ubuntu 24.04+) you'll see errors like:
+
+> CppCompile spawn cannot be executed with any of the available strategies: [processwrapper-sandbox]. Your --spawn_strategy, --genrule_strategy and/or --strategy flags are probably too strict.
+
+If that happens, drop the strict pin or allow a local fallback:
+
+```sh
+bazel build --spawn_strategy=sandboxed,local //xla/...   # sandbox when possible
+bazel build --spawn_strategy=local //xla/...             # no sandbox at all
+bazel build //xla/...                                    # let Bazel pick
+```
+
+Bazel's action cache survives the failure, so a re-run skips everything that already compiled.
+
+If you want to fix sandboxing rather than work around it (Ubuntu 24.04+ commonly disables unprivileged user namespaces via AppArmor):
+
+```sh
+# Quick checks
+ls /proc/self/ns/
+unshare --user --pid echo ok   # if this fails, user namespaces are restricted
+
+# Re-enable (requires sudo)
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
 
 ## 3. Build only the tests
 
@@ -112,3 +139,4 @@ When you want both tests and tools in one shot, `bazel build //xla/...` covers i
 - `docs/developer_guide.md` — getting-started build instructions
 - `docs/build_from_source.md` — detailed build configurations (CPU, CUDA, Docker, JAX CI container)
 - `docs/tools.md` — descriptions of the XLA tools
+- [Bazel issue #7480](https://github.com/bazelbuild/bazel/issues/7480) — context on sandbox strategy failures
