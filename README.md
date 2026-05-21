@@ -74,6 +74,8 @@ All flags are environment variables.
 | `INSTALL_TMUX`         | `1`     | When `0`, skip installing tmux + clipboard helpers (xclip / wl-clipboard on Linux). |
 | `INSTALL_STARSHIP`     | `1`     | When `0`, skip installing the starship prompt.                                  |
 | `INSTALL_NERD_FONT`    | `1`     | When `0`, skip installing the nerd font.                                        |
+| `INSTALL_TERRAFORM`    | `1`     | When `0`, skip installing terraform + terraform-ls + tflint.                    |
+| `INSTALL_CARBONYL`     | `1`     | When `0`, skip installing carbonyl (Chromium-in-the-terminal browser). Linux only. |
 | `NERD_FONT_NAME`       | `JetBrainsMono` | Which nerd font to install. Must match a release-asset name at [ryanoasis/nerd-fonts](https://github.com/ryanoasis/nerd-fonts/releases) (e.g. `FiraCode`, `Hack`, `Meslo`, `Iosevka`). On macOS it's mapped to brew cask `font-<kebab>-nerd-font`. |
 | `TARGET_USER`          | (auto)  | (Linux only) Force the target user when `$SUDO_USER` isn't set (e.g. running as root in a container). |
 

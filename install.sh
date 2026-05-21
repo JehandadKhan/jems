@@ -147,6 +147,14 @@
 #         Mason for terraformls so this script's binaries are what nvim
 #         picks up (mirrors the clangd pattern). Skipped if
 #         INSTALL_TERRAFORM=0.
+#     - carbonyl (Chromium-in-the-terminal browser). Linux only: the
+#         release zip is extracted to ~/.local/share/carbonyl/ and
+#         ~/.local/bin/carbonyl is symlinked there (same user-local
+#         pattern as jupytext / bazel-compile-commands). ~150 MB
+#         extracted. Skipped if INSTALL_CARBONYL=0. The chezmoi'd
+#         bashrc aliases `carbonyl` to pin --user-data-dir so cookies
+#         and logins persist across restarts. macOS no-op (no upstream
+#         release; brew has no formula).
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -214,6 +222,10 @@
 #                         (e.g. FiraCode, Hack, Meslo, Iosevka, CascadiaCode).
 #                         On macOS the brew cask is
 #                         'font-<lowercased>-nerd-font'.
+#   INSTALL_CARBONYL=0  Skip installing carbonyl (Chromium-in-terminal browser).
+#                         Default ON. Linux only — extracts the upstream
+#                         release zip to ~/.local/share/carbonyl/ and
+#                         symlinks ~/.local/bin/carbonyl. macOS is a no-op.
 #   INSTALL_TERRAFORM=0 Skip installing terraform CLI + terraform-ls + tflint.
 #                         Default ON. Linux: terraform and terraform-ls from
 #                         apt.releases.hashicorp.com (adds it as a persistent
@@ -247,6 +259,7 @@ INSTALL_STARSHIP="${INSTALL_STARSHIP:-1}"
 INSTALL_NERD_FONT="${INSTALL_NERD_FONT:-1}"
 NERD_FONT_NAME="${NERD_FONT_NAME:-JetBrainsMono}"
 INSTALL_TERRAFORM="${INSTALL_TERRAFORM:-1}"
+INSTALL_CARBONYL="${INSTALL_CARBONYL:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -512,6 +525,7 @@ run_step 13-starship.sh
 run_step 14-nerd-font.sh
 run_step 15-nvim-venv.sh
 run_step 16-terraform.sh
+run_step 17-carbonyl.sh
 
 # ---------- summary ----------
 # Resolve the clangd we actually wired up — on macOS that's brew's keg-only
@@ -574,6 +588,14 @@ else
     TFLINT_STATUS="(skipped: INSTALL_TERRAFORM=0)"
 fi
 
+if [ "$INSTALL_CARBONYL" = "1" ] && [ "$OS" = "linux" ]; then
+    CARBONYL_STATUS="$("$USER_HOME/.local/bin/carbonyl" --version 2>/dev/null || echo missing)"
+elif [ "$OS" = "macos" ]; then
+    CARBONYL_STATUS="(skipped on macOS)"
+else
+    CARBONYL_STATUS="(skipped: INSTALL_CARBONYL=0)"
+fi
+
 if [ "$INSTALL_NERD_FONT" = "1" ]; then
     if [ "$OS" = "linux" ]; then
         FONT_DIR="$USER_HOME/.local/share/fonts/${NERD_FONT_NAME}NerdFont"
@@ -614,6 +636,7 @@ printf "    %-13s %s\n" "nerd font:"    "$NERD_FONT_STATUS"
 printf "    %-13s %s\n" "terraform:"    "$TERRAFORM_STATUS"
 printf "    %-13s %s\n" "terraform-ls:" "$TERRAFORM_LS_STATUS"
 printf "    %-13s %s\n" "tflint:"       "$TFLINT_STATUS"
+printf "    %-13s %s\n" "carbonyl:"     "$CARBONYL_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"

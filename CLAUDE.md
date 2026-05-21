@@ -97,6 +97,40 @@ Don't break these without updating both sides:
 - Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
   (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.
+- carbonyl: `install.d/17-carbonyl.sh` installs the upstream
+  Chromium-in-the-terminal release (Linux only — no macOS upstream).
+  Bundle goes to `~/.local/share/carbonyl/` (a flat dir of binary +
+  shared libs, ~150 MB extracted) with `~/.local/bin/carbonyl` as a
+  symlink — same user-local-binary pattern as jupytext and the
+  bazel helper. Idempotency via `$CARBONYL_DIR/.installed_version`;
+  bump `CARBONYL_VERSION` in the step when upstream cuts a new
+  release (currently pinned at 0.0.3, the only release available).
+  Gated by `INSTALL_CARBONYL` (default 1). The chezmoi'd bashrc and
+  zshrc define `alias carbonyl='carbonyl --user-data-dir=…'` pointing
+  at `~/.local/share/carbonyl-profile` so cookies / logins / history
+  survive restarts (carbonyl uses an ephemeral Chromium profile by
+  default). No vim keybindings inside carbonyl; for vim-style movement
+  use `w3m` instead.
+- Terraform stack: `install.d/16-terraform.sh` installs the `terraform`
+  CLI, `terraform-ls` LSP, and `tflint` linter. Linux pulls `terraform`
+  and `terraform-ls` from `apt.releases.hashicorp.com` (persistent apt
+  source) and `tflint` via terraform-linters' official installer to
+  `/usr/local/bin`. macOS uses `brew install hashicorp/tap/terraform
+  hashicorp/tap/terraform-ls tflint`. Gated by `INSTALL_TERRAFORM`
+  (default 1). The chezmoi'd `lazyvim.json` enables
+  `lazyvim.plugins.extras.lang.terraform` and `private_terraform.lua`
+  (a) disables Mason for `terraformls` so this script's binary wins,
+  (b) strips `tflint` from Mason's `ensure_installed`, (c) strips
+  `hcl`/`terraform` from `nvim-treesitter`'s `ensure_installed`, and
+  (d) adds `hashivim/vim-terraform` for syntax highlighting. The
+  treesitter exclusion is load-bearing on Ubuntu 22.04: nvim-treesitter
+  (main branch) compiles parsers via a `tree-sitter` CLI; the Mason
+  and npm prebuilt binaries both link against glibc 2.39+ and fail on
+  jammy's glibc 2.35, and building tree-sitter-cli from source also
+  fails because current transitive deps need cargo 1.85+ while jammy
+  ships cargo 1.75. Rather than fight that, we let `vim-terraform`
+  handle highlighting (pure vimscript, no compile) and skip the
+  treesitter parser for hcl/terraform entirely.
 
 ## Single source of truth
 Everything install-side lives under `install.sh` + `install.d/`. There is

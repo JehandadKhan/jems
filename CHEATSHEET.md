@@ -121,3 +121,59 @@ terminal that speaks the Kitty graphics protocol — that means **kitty**,
 text output and DataFrames still display fine; only inline image
 previews are disabled. Inside tmux you also need `allow-passthrough on`
 in `~/.tmux.conf` (the chezmoi'd tmux config sets this).
+
+## carbonyl (Chromium-in-the-terminal browser)
+
+`carbonyl URL` renders any web page directly in the terminal (great for
+a tmux pane next to nvim). The chezmoi'd bashrc/zshrc aliases the
+command to pin `--user-data-dir="$HOME/.local/share/carbonyl-profile"`
+so cookies, logins, and history persist across restarts.
+
+Carbonyl v0.0.3 has a **minimal** keymap — no address bar, no tab UI,
+no find-on-page. The browser is intentionally close to "headless
+Chromium with a TUI viewport." Confirmed bindings (from
+`src/input/parser.rs` upstream):
+
+| Key             | Action                                          |
+| --------------- | ----------------------------------------------- |
+| `Ctrl+C`        | Quit (the only quit key — not `Ctrl+Q`)         |
+| `Alt+←` / `Alt+→` | Back / forward                                |
+| `←` `→` `↑` `↓` | Scroll the page                                 |
+| `Tab` / `S-Tab` | Move DOM focus (next / previous link or input)  |
+| `Enter`         | Submit form / follow focused link               |
+| Typing          | Goes to the focused `<input>` field             |
+| Mouse click     | Click links / buttons                           |
+| Mouse wheel     | Scroll                                          |
+
+**Not implemented in v0.0.3** despite Chrome-style expectations: `Ctrl+L`
+(focus address bar), `Ctrl+T` (new tab), `Ctrl+R` (reload), `Ctrl+F`
+(find), `Ctrl+W` (close tab), `Ctrl+Q` (quit). They're either silently
+forwarded to the page (most pages don't handle them) or eaten by the
+terminal / tmux.
+
+To go to a different URL, **quit with `Ctrl+C` and re-launch** with the
+new URL, or click a link on the current page.
+
+Useful flags (append to the alias if you want them default):
+
+| Flag             | Effect                                                       |
+| ---------------- | ------------------------------------------------------------ |
+| `--zoom=80`      | Shrink to fit more content in narrow tmux panes              |
+| `--fps=30`       | Cap framerate (saves CPU on heavy pages)                     |
+| `--bitmap`       | Render text as bitmaps — sharper in kitty/wezterm/ghostty    |
+| `--debug`        | Log to console (useful when a page hangs)                    |
+| `--user-agent=…` | Any Chromium flag is passed through                          |
+
+**What works**: most modern websites — GitHub, MDN, HN, Reddit, search
+engines, dashboards. Cookies persist (via the alias), TOTP / magic-link
+auth flows work fine. Mouse interaction is the primary input model.
+
+**What doesn't**: WebAuthn / hardware keys / passkeys, browser
+extensions (1Password, Bitwarden), most captchas (reCAPTCHA, Cloudflare
+Turnstile). For GitHub specifically, `gh auth login` handles the OAuth
+dance outside the browser; carbonyl then just renders the pages.
+
+`vim` keybindings: carbonyl does **not** have them and the project
+hasn't shipped a release since Feb 2023. If `j`/`k`/`gg` matter to you,
+use `w3m` instead — same tmux-pane workflow but text-only and
+configurable via `~/.w3m/keymap`.
