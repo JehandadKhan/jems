@@ -92,11 +92,15 @@
 #         `bitwarden` template function shells out to it). Skipped if
 #         INSTALL_BW=0.
 #     - tmux (terminal multiplexer with bottom status line). Linux: apt
-#         'tmux' + clipboard helpers ('xclip' for X11, 'wl-clipboard' for
-#         Wayland) so tmux copy-mode's 'y' lands in the system clipboard.
-#         macOS: 'brew install tmux' (pbcopy is built in). The chezmoi'd
-#         ~/.tmux.conf is expected to configure the status bar and (per
-#         CLAUDE.md) set 'set -gq allow-passthrough on' for image.nvim;
+#         'tmux' if the apt candidate satisfies MIN_TMUX_VERSION; otherwise
+#         built from source to /usr/local/bin/tmux (Ubuntu 22.04 jammy
+#         ships 3.2a, but image.nvim's allow-passthrough needs >= 3.3).
+#         Also installs clipboard helpers ('xclip' for X11, 'wl-clipboard'
+#         for Wayland) so tmux copy-mode's 'y' lands in the system
+#         clipboard. macOS: 'brew install tmux' (pbcopy is built in). The
+#         chezmoi'd ~/.tmux.conf is expected to configure the status bar
+#         and (per CLAUDE.md) set 'set -gq allow-passthrough on' for
+#         image.nvim;
 #         it also enables 'set -s set-clipboard on' so OSC 52 puts copies
 #         on the system clipboard in modern terminals (kitty/wezterm/
 #         ghostty/iTerm2) without needing the helpers at all. The helpers
@@ -215,6 +219,16 @@ NERD_FONT_NAME="${NERD_FONT_NAME:-JetBrainsMono}"
 # See https://github.com/LazyVim/LazyVim/issues/6421 for the symptom.
 MIN_NVIM_VERSION="0.11.2"
 
+# Minimum tmux that supports `allow-passthrough`, which image.nvim's kitty
+# backend requires when nvim runs inside tmux. Ubuntu 22.04 (jammy) ships
+# 3.2a, so the tmux step builds from source on jammy and older. Bump if a
+# downstream needs a newer feature.
+MIN_TMUX_VERSION="3.3"
+
+# Pinned tmux source tarball used when apt's candidate is too old. Built
+# from the official github.com/tmux/tmux release.
+TMUX_SOURCE_VERSION="3.5a"
+
 # Pinned nerd-fonts release. Re-runs across machines land on the same
 # version, and the installer doesn't randomly re-download when upstream
 # publishes a new release.
@@ -331,6 +345,25 @@ nvim_version_ok() {
     awk -v cur="$cur" -v min="$MIN_NVIM_VERSION" 'BEGIN {
         n = split(cur, c, "."); split(min, m, ".")
         for (i = 1; i <= 3; i++) {
+            cv = (i <= n) ? c[i]+0 : 0
+            mv = m[i]+0
+            if (cv > mv) exit 0
+            if (cv < mv) exit 1
+        }
+        exit 0
+    }'
+}
+
+# Returns 0 if VERSION >= MIN_TMUX_VERSION. tmux versions look like "3.5a"
+# or "next-3.6"; we strip non-digit suffixes from each segment and compare
+# numerically. Used by the tmux step and the apt-candidate check.
+tmux_version_ok() {
+    local ver="$1"
+    [ -n "$ver" ] || return 1
+    awk -v cur="$ver" -v min="$MIN_TMUX_VERSION" 'BEGIN {
+        gsub(/[^0-9.]/, "", cur); gsub(/[^0-9.]/, "", min)
+        n = split(cur, c, "."); split(min, m, ".")
+        for (i = 1; i <= 2; i++) {
             cv = (i <= n) ? c[i]+0 : 0
             mv = m[i]+0
             if (cv > mv) exit 0
