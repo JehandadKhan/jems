@@ -11,12 +11,16 @@
 
 if [ "$INSTALL_STARSHIP" = "1" ]; then
     if [ "$OS" = "linux" ]; then
-        # Re-run unconditionally to pick up new releases; the installer's
-        # -y flag overwrites any existing /usr/local/bin/starship in place.
-        echo "==> Installing/updating starship to /usr/local/bin (via sh.starship.rs)"
-        curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/local/bin
+        if tool_version_ok starship "$MIN_STARSHIP_VERSION"; then
+            echo "==> starship already installed: $(starship --version 2>/dev/null | head -1)"
+        else
+            CUR_STARSHIP="$(starship --version 2>/dev/null | head -1 || echo 'not installed')"
+            echo "==> Installing/updating starship to /usr/local/bin — current: $CUR_STARSHIP, need >= v$MIN_STARSHIP_VERSION"
+            echo "    (via sh.starship.rs; --yes overwrites existing binary)"
+            curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/local/bin
+        fi
     else
-        brew_install_if_missing starship
+        brew_ensure starship "$MIN_STARSHIP_VERSION"
     fi
 else
     echo "==> INSTALL_STARSHIP=0; skipping starship install"

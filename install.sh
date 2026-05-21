@@ -31,8 +31,11 @@
 # Re-run:        the same command. The script is designed to be safely
 #                re-run on any machine to bring tools up to date. Python
 #                deps in the nvim venv are upgraded; brew/apt installs are
-#                gated on whether the formula/package is already present so
-#                we don't gratuitously upgrade pinned versions.
+#                gated by a per-tool MIN_* floor (see the MIN_* block
+#                below) — a tool that's already at-or-above the floor is
+#                left alone, anything below is reinstalled or upgraded.
+#                This is what prevents the old version-trap where a stale
+#                pre-existing binary made the step a no-op forever.
 #
 # Prerequisite (macOS): Homebrew must be installed first (https://brew.sh).
 #   Xcode Command Line Tools are pulled in by brew on first install.
@@ -234,6 +237,18 @@ TMUX_SOURCE_VERSION="3.5a"
 # publishes a new release.
 NERD_FONT_TAG="v3.4.0"
 
+# Minimum versions for tools whose "just present" gate used to let stale
+# copies win. Below these floors the step force-reinstalls/upgrades rather
+# than skipping. Bump these when chezmoi-side configs start relying on a
+# newer feature, or when an upstream release fixes something we hit.
+MIN_NODE_VERSION="20.0.0"
+MIN_CLANGD_VERSION="18.0.0"
+MIN_FZF_VERSION="0.48.0"
+MIN_CHEZMOI_VERSION="2.50.0"
+MIN_GH_VERSION="2.40.0"
+MIN_BW_VERSION="2024.1.0"
+MIN_STARSHIP_VERSION="1.18.0"
+
 # ---------- locate subscripts ----------
 # resolve symlinks so install.d/ is found even when the script is invoked
 # via a symlink (e.g. ~/bin/install.sh -> /path/to/jems/install.sh).
@@ -320,57 +335,104 @@ else
     run_as_user() { "$@"; }
 fi
 
-# brew_install_if_missing FORMULA — install a brew formula only if it's not
-# already present. Used by every macOS-only step that doesn't want to
-# gratuitously upgrade a tool the user is pinning.
-brew_install_if_missing() {
-    local f="$1"
-    if brew list --formula "$f" >/dev/null 2>&1; then
-        echo "    $f already installed"
-    else
+# version_ge CUR MIN [SEGMENTS] — returns 0 if CUR >= MIN by numeric
+# major.minor.patch compare (default 3 segments). Strips non-digit chars
+# from each segment so "3.5a", "v0.11.2", "1.25.1-foo" all work. awk-based
+# so we don't depend on GNU sort -V (BSD sort on macOS lacks it). This is
+# the one place version compares live; tool-specific helpers below call it.
+version_ge() {
+    local cur="$1" min="$2" segments="${3:-3}"
+    [ -n "$cur" ] && [ -n "$min" ] || return 1
+    awk -v cur="$cur" -v min="$min" -v seg="$segments" 'BEGIN {
+        gsub(/^v/, "", cur); gsub(/^v/, "", min)
+        n = split(cur, c, "."); split(min, m, ".")
+        for (i = 1; i <= seg; i++) {
+            cv = c[i]; mv = m[i]
+            gsub(/[^0-9]/, "", cv); gsub(/[^0-9]/, "", mv)
+            cv += 0; mv += 0
+            if (cv > mv) exit 0
+            if (cv < mv) exit 1
+        }
+        exit 0
+    }'
+}
+
+# tool_version_ok CMD MIN [VERSION_ARGS...] — returns 0 if CMD is on PATH
+# and its --version output (first whitespace-separated token containing a
+# digit on the first line) is >= MIN. Used by steps that previously gated
+# only on `command -v <tool>` and so let stale binaries win.
+#
+# Examples:
+#   tool_version_ok fzf "$MIN_FZF_VERSION"          # "0.72.0 (6fefe...)"
+#   tool_version_ok chezmoi "$MIN_CHEZMOI_VERSION"  # "chezmoi version v2.70.3, ..."
+#
+# When the standard `<cmd> --version` extraction doesn't work (e.g. the
+# tool doesn't ship --version, or its output puts the version somewhere
+# weird), call version_ge directly with a pre-extracted string instead.
+tool_version_ok() {
+    local cmd="$1" min="$2"; shift 2
+    command -v "$cmd" >/dev/null 2>&1 || return 1
+    local out cur
+    out="$("$cmd" "${@:---version}" 2>/dev/null | head -1)" || return 1
+    # First token that contains a digit — handles "fzf 0.72.0", "gh version 2.92.0",
+    # "chezmoi version v2.70.3, commit ...", "starship 1.25.1", "2026.4.2", etc.
+    cur="$(printf '%s\n' "$out" | awk '{
+        for (i = 1; i <= NF; i++) if ($i ~ /[0-9]/) { print $i; exit }
+    }')"
+    version_ge "$cur" "$min"
+}
+
+# brew_ensure FORMULA [MIN_VER] — install a brew formula if missing,
+# `brew upgrade` it if the installed version is below MIN_VER, otherwise
+# leave it alone. Replaces the old brew_install_if_missing helper, which
+# skipped purely on presence and let stale brew formulae win when they
+# were below a feature floor we depend on. Pass no MIN_VER for the
+# legacy "install if missing, never upgrade" behavior.
+brew_ensure() {
+    local f="$1" min="${2:-}"
+    if ! brew list --formula "$f" >/dev/null 2>&1; then
         echo "    installing $f"
         brew install "$f"
+        return
+    fi
+    if [ -z "$min" ]; then
+        echo "    $f already installed"
+        return
+    fi
+    # `brew list --versions FORMULA` -> "neovim 0.11.2" (multiple if several
+    # kegs are installed; pick the highest by taking the last field of the
+    # last line — brew lists oldest-first).
+    local cur
+    cur="$(brew list --versions "$f" 2>/dev/null | tail -1 | awk '{print $NF}')"
+    if version_ge "$cur" "$min"; then
+        echo "    $f $cur already satisfies >= $min"
+    else
+        echo "    upgrading $f ($cur -> latest; need >= $min)"
+        brew upgrade "$f"
     fi
 }
 
-# Returns 0 if nvim is on PATH and >= MIN_NVIM_VERSION, else 1. We compare
-# major.minor.patch numerically via awk so we don't depend on GNU sort -V
-# (BSD sort on macOS doesn't have it). Used by 03-nvim.sh; defined here
-# because the summary at the end also wants to know.
+# Back-compat shim so any out-of-tree caller keeps working; new code
+# should use brew_ensure directly.
+brew_install_if_missing() { brew_ensure "$1"; }
+
+# Thin wrappers that the steps and the summary use. These exist so callers
+# read naturally ("if nvim_version_ok") rather than threading the floor
+# through every call site, and so a single MIN_* bump propagates without
+# touching the step.
 nvim_version_ok() {
     command -v nvim >/dev/null 2>&1 || return 1
     local cur
-    cur="$(nvim --version 2>/dev/null | head -1 | awk '{print $2}' | sed 's/^v//')"
-    [ -n "$cur" ] || return 1
-    awk -v cur="$cur" -v min="$MIN_NVIM_VERSION" 'BEGIN {
-        n = split(cur, c, "."); split(min, m, ".")
-        for (i = 1; i <= 3; i++) {
-            cv = (i <= n) ? c[i]+0 : 0
-            mv = m[i]+0
-            if (cv > mv) exit 0
-            if (cv < mv) exit 1
-        }
-        exit 0
-    }'
+    cur="$(nvim --version 2>/dev/null | head -1 | awk '{print $2}')"
+    version_ge "$cur" "$MIN_NVIM_VERSION"
 }
 
-# Returns 0 if VERSION >= MIN_TMUX_VERSION. tmux versions look like "3.5a"
-# or "next-3.6"; we strip non-digit suffixes from each segment and compare
-# numerically. Used by the tmux step and the apt-candidate check.
+# tmux's version line is "tmux 3.5a" / "tmux next-3.6"; accepts a string
+# from the caller because the apt-candidate path checks `apt-cache policy`
+# output, not a running tmux. Two-segment compare since tmux doesn't use
+# patch numbers.
 tmux_version_ok() {
-    local ver="$1"
-    [ -n "$ver" ] || return 1
-    awk -v cur="$ver" -v min="$MIN_TMUX_VERSION" 'BEGIN {
-        gsub(/[^0-9.]/, "", cur); gsub(/[^0-9.]/, "", min)
-        n = split(cur, c, "."); split(min, m, ".")
-        for (i = 1; i <= 2; i++) {
-            cv = (i <= n) ? c[i]+0 : 0
-            mv = m[i]+0
-            if (cv > mv) exit 0
-            if (cv < mv) exit 1
-        }
-        exit 0
-    }'
+    version_ge "$1" "$MIN_TMUX_VERSION" 2
 }
 
 # Map a CamelCase nerd-font name (e.g. JetBrainsMono) to a brew cask name

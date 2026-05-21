@@ -8,14 +8,16 @@
 
 if [ "$INSTALL_CHEZMOI" = "1" ]; then
     if [ "$OS" = "linux" ]; then
-        if ! command -v chezmoi >/dev/null 2>&1; then
-            echo "==> Installing chezmoi to /usr/local/bin (via get.chezmoi.io)"
-            sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
-        else
+        if tool_version_ok chezmoi "$MIN_CHEZMOI_VERSION"; then
             echo "==> chezmoi already installed: $(chezmoi --version 2>/dev/null | head -1)"
+        else
+            CUR_CHEZMOI="$(chezmoi --version 2>/dev/null | head -1 || echo 'not installed')"
+            echo "==> Installing chezmoi to /usr/local/bin — current: $CUR_CHEZMOI, need >= v$MIN_CHEZMOI_VERSION"
+            echo "    (via get.chezmoi.io)"
+            sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
         fi
     else
-        brew_install_if_missing chezmoi
+        brew_ensure chezmoi "$MIN_CHEZMOI_VERSION"
     fi
 else
     echo "==> INSTALL_CHEZMOI=0; skipping chezmoi install"

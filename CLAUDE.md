@@ -106,11 +106,21 @@ third level, lift the shared code into `install.sh` instead.
 
 ## Re-run contract
 The script is designed to be run repeatedly on the same box:
-- apt/brew / node / nvim / fzf / clangd / basedpyright / claude code / bazel
-  helper / venv steps are idempotent. Brew installs are gated on
-  `brew list --formula <name>` so we never gratuitously upgrade a tool the
-  user is pinning. `npm i -g` for basedpyright/claude is run unconditionally
-  to pick up new releases.
+- Each step is gated by a per-tool **`MIN_*` floor** declared at the top of
+  `install.sh` (`MIN_NVIM_VERSION`, `MIN_FZF_VERSION`, `MIN_CLANGD_VERSION`,
+  etc.). If the installed tool is at or above the floor, the step is a
+  no-op; if it's below, the step reinstalls/upgrades. Don't go back to
+  gating on bare `command -v <tool>` or `brew list --formula <name>` —
+  those let stale pre-existing binaries win and reintroduce the version
+  trap. Bump the floor when a chezmoi-side config (or another step) starts
+  relying on a feature that's only in a newer release.
+- `version_ge CUR MIN` and `tool_version_ok CMD MIN` in `install.sh` are
+  the canonical version helpers — call them rather than open-coding awk
+  comparisons. `brew_ensure FORMULA [MIN_VER]` is the macOS equivalent of
+  "install or upgrade to the floor"; passing no MIN keeps the legacy
+  install-if-missing behavior for prereqs that don't have a feature floor.
+- `npm i -g` for basedpyright/claude/bw(Linux) is unconditional — npm
+  always installs the latest, so a floor would just be noise.
 - The Python venv at `~/.local/share/nvim-venv` is reused if it exists;
   pip dependencies inside it are upgraded on every run.
 - Symlinks under `~/.local/bin` are re-pointed each run with `ln -sf` so

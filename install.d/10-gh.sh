@@ -7,8 +7,12 @@
 
 if [ "$INSTALL_GH" = "1" ]; then
     if [ "$OS" = "linux" ]; then
-        if ! command -v gh >/dev/null 2>&1; then
-            echo "==> Installing gh (adds cli.github.com as a persistent apt source)"
+        if tool_version_ok gh "$MIN_GH_VERSION"; then
+            echo "==> gh already installed: $(gh --version 2>/dev/null | head -1)"
+        else
+            CUR_GH="$(gh --version 2>/dev/null | head -1 || echo 'not installed')"
+            echo "==> Installing gh from cli.github.com — current: $CUR_GH, need >= v$MIN_GH_VERSION"
+            echo "    (adds it as a persistent apt source)"
             install -d -m 0755 /etc/apt/keyrings
             if [ ! -f /etc/apt/keyrings/githubcli-archive-keyring.gpg ]; then
                 wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -19,11 +23,10 @@ if [ "$INSTALL_GH" = "1" ]; then
                 > /etc/apt/sources.list.d/github-cli.list
             apt-get update -y
             apt-get install -y gh
-        else
-            echo "==> gh already installed: $(gh --version 2>/dev/null | head -1)"
+            echo "==> gh installed: $(gh --version 2>/dev/null | head -1)"
         fi
     else
-        brew_install_if_missing gh
+        brew_ensure gh "$MIN_GH_VERSION"
     fi
 else
     echo "==> INSTALL_GH=0; skipping gh install"

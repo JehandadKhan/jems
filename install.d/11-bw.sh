@@ -9,11 +9,13 @@
 
 if [ "$INSTALL_BW" = "1" ]; then
     if [ "$OS" = "linux" ]; then
+        # npm i -g is unconditional on Linux — npm always installs the
+        # latest published version, so no version floor needed here.
         echo "==> Installing/updating Bitwarden CLI via 'npm i -g @bitwarden/cli'"
         npm install -g @bitwarden/cli >/dev/null
         echo "    bw: $(bw --version 2>/dev/null || echo unknown)"
     else
-        brew_install_if_missing bitwarden-cli
+        brew_ensure bitwarden-cli "$MIN_BW_VERSION"
     fi
 else
     echo "==> INSTALL_BW=0; skipping Bitwarden CLI install"

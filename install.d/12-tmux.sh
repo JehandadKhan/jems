@@ -83,10 +83,12 @@ if [ "$INSTALL_TMUX" = "1" ]; then
         echo "==> Installing clipboard helpers (xclip + wl-clipboard)"
         apt-get install -y xclip wl-clipboard
     else
-        brew_install_if_missing tmux
+        # Pass MIN_TMUX_VERSION so a stale brew tmux gets upgraded rather
+        # than skipped on presence. Homebrew normally ships well past 3.3,
+        # but the floor catches the case where the user pinned an old tmux
+        # before we set the floor.
+        brew_ensure tmux "$MIN_TMUX_VERSION"
         # macOS: pbcopy/pbpaste are part of the OS, nothing to install.
-        # Homebrew's tmux is always >= MIN_TMUX_VERSION so no version
-        # check needed here.
     fi
 else
     echo "==> INSTALL_TMUX=0; skipping tmux install"
