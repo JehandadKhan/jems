@@ -55,6 +55,11 @@
 #     - cli.github.com as a persistent apt source for `gh` (same caveat:
 #         every future 'apt update' will hit it; key not fingerprint-pinned).
 #         Skipped if INSTALL_GH=0.
+#     - apt.releases.hashicorp.com as a persistent apt source for
+#         `terraform-ls` (same caveat: every future 'apt update' will hit
+#         it; key not fingerprint-pinned). `tflint` is installed via the
+#         terraform-linters install_linux.sh script to /usr/local/bin
+#         (no apt repo). Both skipped if INSTALL_TERRAFORM=0.
 #     - chezmoi binary at /usr/local/bin/chezmoi via get.chezmoi.io
 #         (no apt repo). Skipped if INSTALL_CHEZMOI=0.
 #     - update-alternatives entries for /usr/bin/clangd (and optionally
@@ -63,9 +68,11 @@
 #   macOS (Homebrew, runs as your user):
 #     - brew formulae installed if missing: neovim, node, ripgrep, ninja,
 #         cmake, gettext, imagemagick, llvm (for clangd), chezmoi, gh,
-#         tmux, starship. Existing versions are left alone (the script does
-#         not 'brew upgrade'). chezmoi/gh/tmux/starship are gated on their
-#         respective INSTALL_* flags.
+#         tmux, starship, hashicorp/tap/terraform-ls, tflint. Existing
+#         versions are left alone (the script does not 'brew upgrade').
+#         chezmoi/gh/tmux/starship/terraform-ls/tflint are gated on their
+#         respective INSTALL_* flags. terraform-ls requires the
+#         hashicorp/tap brew tap (added automatically by step 16).
 #     - Symlink ~/.local/bin/clangd -> $(brew --prefix llvm)/bin/clangd
 #         (brew does not link llvm by default to avoid clobbering Apple's
 #         clang). Remove the symlink to undo.
@@ -127,6 +134,16 @@
 #         at the install path. Skipped if INSTALL_NERD_FONT=0. To actually
 #         see the icons, set your terminal emulator's font to a
 #         JetBrainsMono Nerd Font variant.
+#     - terraform-ls (HashiCorp's Terraform LSP) + tflint (Terraform
+#         linter). Linux: terraform-ls from apt.releases.hashicorp.com
+#         (persistent apt source); tflint via the official
+#         install_linux.sh installer to /usr/local/bin. macOS:
+#         'brew install hashicorp/tap/terraform-ls tflint' (the tap is
+#         added automatically). The chezmoi'd nvim config enables
+#         LazyVim's lang.terraform extra and uses private_terraform.lua
+#         to disable Mason for terraformls so this script's binaries are
+#         what nvim picks up (mirrors the clangd pattern). Skipped if
+#         INSTALL_TERRAFORM=0.
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -194,11 +211,21 @@
 #                         (e.g. FiraCode, Hack, Meslo, Iosevka, CascadiaCode).
 #                         On macOS the brew cask is
 #                         'font-<lowercased>-nerd-font'.
+#   INSTALL_TERRAFORM=0 Skip installing terraform-ls + tflint. Default ON.
+#                         Linux: terraform-ls from apt.releases.hashicorp.com
+#                         (adds it as a persistent apt source); tflint from
+#                         the terraform-linters official installer to
+#                         /usr/local/bin. macOS: brew install
+#                         hashicorp/tap/terraform-ls + tflint. Backs LazyVim's
+#                         lang.terraform extra (enabled in the chezmoi'd
+#                         lazyvim.json).
 #
-# To uninstall the apt sources later (Linux; clangd-18 / gh binaries remain):
+# To uninstall the apt sources later (Linux; clangd-18 / gh / terraform-ls
+# binaries remain):
 #   sudo rm /etc/apt/sources.list.d/llvm-18.list /etc/apt/keyrings/llvm.gpg
 #   sudo rm /etc/apt/sources.list.d/nodesource.list
 #   sudo rm /etc/apt/sources.list.d/github-cli.list /etc/apt/keyrings/githubcli-archive-keyring.gpg
+#   sudo rm /etc/apt/sources.list.d/hashicorp.list /etc/apt/keyrings/hashicorp.gpg
 
 set -euo pipefail
 
@@ -214,6 +241,7 @@ INSTALL_TMUX="${INSTALL_TMUX:-1}"
 INSTALL_STARSHIP="${INSTALL_STARSHIP:-1}"
 INSTALL_NERD_FONT="${INSTALL_NERD_FONT:-1}"
 NERD_FONT_NAME="${NERD_FONT_NAME:-JetBrainsMono}"
+INSTALL_TERRAFORM="${INSTALL_TERRAFORM:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -478,6 +506,7 @@ run_step 12-tmux.sh
 run_step 13-starship.sh
 run_step 14-nerd-font.sh
 run_step 15-nvim-venv.sh
+run_step 16-terraform.sh
 
 # ---------- summary ----------
 # Resolve the clangd we actually wired up — on macOS that's brew's keg-only
@@ -530,6 +559,14 @@ else
     STARSHIP_STATUS="(skipped: INSTALL_STARSHIP=0)"
 fi
 
+if [ "$INSTALL_TERRAFORM" = "1" ]; then
+    TERRAFORM_LS_STATUS="$(terraform-ls --version 2>/dev/null | head -1 || echo missing)"
+    TFLINT_STATUS="$(tflint --version 2>/dev/null | head -1 || echo missing)"
+else
+    TERRAFORM_LS_STATUS="(skipped: INSTALL_TERRAFORM=0)"
+    TFLINT_STATUS="(skipped: INSTALL_TERRAFORM=0)"
+fi
+
 if [ "$INSTALL_NERD_FONT" = "1" ]; then
     if [ "$OS" = "linux" ]; then
         FONT_DIR="$USER_HOME/.local/share/fonts/${NERD_FONT_NAME}NerdFont"
@@ -567,6 +604,8 @@ printf "    %-13s %s\n" "bw:"           "$BW_STATUS"
 printf "    %-13s %s\n" "tmux:"         "$TMUX_STATUS"
 printf "    %-13s %s\n" "starship:"     "$STARSHIP_STATUS"
 printf "    %-13s %s\n" "nerd font:"    "$NERD_FONT_STATUS"
+printf "    %-13s %s\n" "terraform-ls:" "$TERRAFORM_LS_STATUS"
+printf "    %-13s %s\n" "tflint:"       "$TFLINT_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
@@ -577,8 +616,12 @@ if [ "$OS" = "linux" ]; then
         echo "    /etc/apt/sources.list.d/github-cli.list"
         echo "    /etc/apt/keyrings/githubcli-archive-keyring.gpg"
     fi
+    if [ "$INSTALL_TERRAFORM" = "1" ]; then
+        echo "    /etc/apt/sources.list.d/hashicorp.list"
+        echo "    /etc/apt/keyrings/hashicorp.gpg"
+    fi
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli tmux starship"
+    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli tmux starship hashicorp/tap/terraform-ls tflint"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"
