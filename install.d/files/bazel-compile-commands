@@ -9,7 +9,7 @@
 # is needed at run time.
 #
 # Usage:
-#   bazel-compile-commands [--clean] [REPO_ROOT] [TARGETS...]
+#   bazel-compile-commands [--clean] [--config NAME]... [REPO_ROOT] [TARGETS...]
 #
 # Arguments (all optional):
 #   REPO_ROOT  Path to the Bazel workspace. If omitted, walks up from PWD
@@ -18,6 +18,13 @@
 #              if omitted. Scope this if //... is too broad for your repo.
 #
 # Flags:
+#   --config NAME  Pass --config=NAME to the bazel run AND through to hedron's
+#                  internal aquery (repeatable). Needed by repos whose correct
+#                  C++ toolchain only activates under a named config — e.g. XLA
+#                  on ROCm needs `--config rocm_clang_local`, else Bazel falls
+#                  back to its GCC-assuming auto-toolchain and clang dies on
+#                  `-fno-canonical-system-headers`. Can also be supplied via the
+#                  BAZEL_CONFIG env var (space-separated list).
 #   --clean    Remove the managed MODULE.bazel/WORKSPACE block and the
 #              tools/clangd/ dir this helper added. Leaves
 #              compile_commands.json in place.
@@ -46,6 +53,9 @@ bazel-compile-commands-extractor, so clangd gets accurate flags.
   TARGETS    Bazel labels to extract. Defaults to //... (scope with e.g.
              //xla/... to skip third_party).
 
+  --config NAME  Pass --config=NAME to bazel and hedron's aquery (repeatable;
+                 or set BAZEL_CONFIG). Use for repos needing a named toolchain
+                 config, e.g. XLA/ROCm: --config rocm_clang_local.
   --clean    Remove the managed MODULE.bazel/WORKSPACE block and tools/clangd/
              dir this helper added. compile_commands.json is left in place.
   --help     Show this help.
@@ -55,10 +65,33 @@ EOF
 }
 
 CLEAN=0
-case "${1:-}" in
-    -h|--help) usage; exit 0 ;;
-    --clean)   CLEAN=1; shift ;;
-esac
+# Seed bazel config(s) from the env, then let --config flags append. Each entry
+# becomes a --config=NAME passed to `bazel run` and forwarded to hedron's aquery.
+CONFIGS=()
+if [ -n "${BAZEL_CONFIG:-}" ]; then
+    # shellcheck disable=SC2206  # intentional word-split: space-separated list
+    CONFIGS=($BAZEL_CONFIG)
+fi
+# Parse leading flags (--clean / --config NAME / --help), which may interleave
+# before the positional REPO_ROOT / TARGETS. Stop at the first non-flag.
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)  usage; exit 0 ;;
+        --clean)    CLEAN=1; shift ;;
+        --config)
+            [ "$#" -ge 2 ] || { echo "error: --config requires a NAME argument" >&2; exit 1; }
+            CONFIGS+=("$2"); shift 2 ;;
+        --config=*) CONFIGS+=("${1#--config=}"); shift ;;
+        --)         shift; break ;;
+        *)          break ;;
+    esac
+done
+
+# Materialize the --config=NAME flags once for reuse below.
+CONFIG_FLAGS=()
+for c in ${CONFIGS+"${CONFIGS[@]}"}; do
+    CONFIG_FLAGS+=("--config=$c")
+done
 
 # Resolve repo root: explicit arg if it looks like a Bazel workspace,
 # otherwise walk up from PWD looking for MODULE.bazel / WORKSPACE.
@@ -217,10 +250,21 @@ if [ -d "$ROOT/.git" ]; then
 fi
 
 # Run the refresh. cd into the repo so bazel finds the workspace and writes
-# compile_commands.json at the right root.
-echo "==> $BAZEL run //tools/clangd:refresh_compile_commands"
+# compile_commands.json at the right root. Any --config flags are applied to
+# the `bazel run` (so the run-phase toolchain is right) AND forwarded past `--`
+# to hedron's refresh script, which appends them to its internal `bazel aquery`
+# (refresh.template.py: additional_flags = shlex.split(flags) + sys.argv[1:]).
+# Both phases must agree on the toolchain or the extracted flags won't match
+# what actually compiles.
+if [ "${#CONFIG_FLAGS[@]}" -gt 0 ]; then
+    echo "==> $BAZEL run ${CONFIG_FLAGS[*]} //tools/clangd:refresh_compile_commands -- ${CONFIG_FLAGS[*]}"
+else
+    echo "==> $BAZEL run //tools/clangd:refresh_compile_commands"
+fi
 echo "    (first run on a large repo can take 10-30 min)"
-( cd "$ROOT" && "$BAZEL" run //tools/clangd:refresh_compile_commands )
+( cd "$ROOT" && "$BAZEL" run ${CONFIG_FLAGS+"${CONFIG_FLAGS[@]}"} \
+    //tools/clangd:refresh_compile_commands \
+    ${CONFIG_FLAGS:+-- "${CONFIG_FLAGS[@]}"} )
 
 if [ ! -f "$ROOT/compile_commands.json" ]; then
     echo "error: bazel ran but compile_commands.json was not produced at $ROOT" >&2

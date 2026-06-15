@@ -94,6 +94,41 @@ Don't break these without updating both sides:
   path. See hedron issue #168. The patch is idempotent and re-applied
   on every `install.sh` run, so a `git pull` of hedron that reverts it
   gets re-fixed.
+  - Host↔container gotcha (not install-side, but bites the bazel-compile-commands
+    workflow): when running the extractor inside a `docker run -u $(id -u):$(id -g)`
+    container (the chezmoi'd `drun` alias), the container must (a) bind-mount
+    `/etc/passwd` + `/etc/group` read-only and/or set `-e USER="$USER"` so Bazel
+    resolves the same `~/.cache/bazel/_bazel_$USER` output base as the host —
+    otherwise `$USER` is empty inside, Bazel picks a fresh output base, and every
+    external repo (notably the multi-GB LLVM toolchain) re-downloads from cold.
+    (b) `--group-add` the GPU device GIDs *numerically* — `/dev/kfd` and
+    `/dev/dri/renderD*` are group `render` (GID 109 on this host, but `render` is
+    a dynamic ≥100 allocation and can differ per machine), `/dev/dri/card*` is
+    `video` (GID 44, a Debian static alloc). Name-based `--group-add video`
+    resolves against the image's `/etc/group`, misses `render`, and breaks
+    `rocminfo`. The robust form derives them at runtime:
+    `--group-add "$(stat -c %g /dev/kfd)" --group-add "$(stat -c %g /dev/dri/renderD128)"`.
+    All of this lives in the chezmoi'd `~/.bashrc` (`private_dot_bashrc`), not
+    here — this note is just a pointer for the next "clangd can't find headers /
+    rocminfo fails in the container" triage.
+  - `--config` passthrough: the helper takes `--config NAME` (repeatable; or the
+    `BAZEL_CONFIG` env var) and applies it both to its `bazel run` and — past a
+    `--` — to hedron's internal `bazel aquery` (refresh.template.py does
+    `additional_flags = shlex.split(flags) + sys.argv[1:]`). This exists because
+    the helper otherwise runs *bare* `bazel run`, which on repos that need a
+    named toolchain config falls back to Bazel's auto-detected `local` toolchain.
+    On an Ubuntu host that toolchain assumes GCC and injects
+    `-fno-canonical-system-headers`; with a clang compiler (e.g. XLA's
+    `/usr/lib/llvm-18/bin/clang`) clang rejects that flag and hedron's
+    `print_args.cpp` fails to compile before extraction even starts. Fix: pass
+    the repo's build config — for XLA on ROCm,
+    `bazel-compile-commands --config rocm_clang_local <root> //xla/...`
+    (`rocm_clang_local` = `rocm_base` + `clang_local` + the ROCm crosstool, and
+    pins `CLANG_COMPILER_PATH=/usr/lib/llvm-18/bin/clang` — which only exists
+    inside the ROCm container, so run the extractor there). The equivalent
+    repo-local alternative is a gitignored `.tf_configure.bazelrc` with
+    `common --config=rocm_clang_local` (XLA's `try-import` slot), but the
+    `--config` flag keeps the toolchain choice explicit on the command line.
 - Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
   (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.
