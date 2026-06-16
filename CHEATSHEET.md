@@ -39,6 +39,49 @@ Project-wide file / text search (Telescope / Snacks picker):
 Sanity check on a new repo: open a source file, then `:LspInfo` (should
 list `clangd` or `basedpyright`) and `:checkhealth lsp`.
 
+## Code review (octo.nvim + diffview.nvim)
+
+The chezmoi'd config enables LazyVim's `util.octo` extra (octo.nvim,
+wired to the fzf-lua picker) plus `lua/plugins/code-review.lua`
+(diffview.nvim). octo authenticates through the `gh` CLI that the
+installer provisions — no extra token setup.
+
+**GitHub PR / issue review (octo).** The full flow lives in nvim buffers:
+
+| Action                              | Command / Key        |
+| ----------------------------------- | -------------------- |
+| List PRs                            | `:Octo pr list`      |
+| List issues                         | `:Octo issue list`   |
+| Start a review on the open PR       | `:Octo review start` |
+| Add an inline comment (cursor line) | `:Octo comment add`  |
+| Add an inline comment (range)       | visual-select, `:Octo comment add` |
+| Submit the review (approve / comment / request-changes) | `:Octo review submit` |
+| Discard the in-progress review      | `:Octo review discard` |
+
+octo also registers `<leader>g` keymaps from the extra: `<leader>gi` list
+issues, `<leader>gI` search issues, `<leader>gp` list PRs, `<leader>gP`
+search PRs, `<leader>gr` list repos, `<leader>gS` search. `:Octo` with no
+args lists every subcommand.
+
+**Diff / file-history viewer (diffview).** Standalone side-by-side diffs
+of any git revision — also the UI octo drops you into during a review.
+All under the `<leader>gv` ("view") group, chosen to avoid clashes:
+`gd`/`gD` are LSP go-to-definition/declaration (see Code navigation
+above) and `<leader>gd`/`<leader>gD` are the fzf-lua git-diff pickers, so
+diffview gets its own namespace.
+
+| Action                              | Key                  |
+| ----------------------------------- | -------------------- |
+| Open diffview (working tree vs HEAD)| `<leader>gvo`        |
+| Close diffview                      | `<leader>gvc`        |
+| File history of current file        | `<leader>gvh`        |
+| File history of the whole branch    | `<leader>gvH`        |
+
+Inside diffview: `<Tab>` / `<S-Tab>` cycle changed files, `g?` shows the
+plugin's help. To diff against an arbitrary ref, call the command
+directly, e.g. `:DiffviewOpen origin/main...HEAD` or
+`:DiffviewOpen HEAD~3`.
+
 ## File explorer (mini.files)
 
 The chezmoi'd config enables LazyVim's `editor.mini-files` extra and
