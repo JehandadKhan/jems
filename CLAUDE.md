@@ -21,7 +21,8 @@ top and platform-specific blocks branch on `$OS` (`linux` | `macos`).
   here, not in a subscript.
 - `install.d/NN-<step>.sh` — one file per install step (system prereqs,
   node, nvim, fzf, clangd, bazel helper, basedpyright, claude, chezmoi, gh,
-  bw, tmux, starship, nerd-font, nvim-venv, and the interactive bootstrap
+  bw, tmux, starship, nerd-font, nvim-venv, terraform, carbonyl, mermaid,
+  and the interactive bootstrap
   prompts at `99-`). Subscripts are **sourced**, not exec'd, so they
   inherit the driver's variables and helpers. Numeric prefix is also the
   run order — node before anything that shells out to npm, nvim before the
@@ -166,6 +167,23 @@ Don't break these without updating both sides:
   ships cargo 1.75. Rather than fight that, we let `vim-terraform`
   handle highlighting (pure vimscript, no compile) and skip the
   treesitter parser for hcl/terraform entirely.
+- Mermaid tooling: `install.d/18-mermaid.sh` installs two renderers, gated
+  by `INSTALL_MERMAID` (default 1). **mermaid-cli** (`mmdc`) goes in via
+  `npm i -g @mermaid-js/mermaid-cli@$MERMAID_CLI_VERSION` (pinned; bundles a
+  puppeteer/headless-Chromium SVG/PNG/PDF renderer). **mmdflux**
+  (kevinswiber/mmdflux — Mermaid → terminal text / SVG / structured JSON,
+  no browser) is built from crates.io via `cargo install mmdflux --version
+  $MMDFLUX_VERSION --locked`, landing in `~/.cargo/bin/mmdflux`. Both
+  versions are pinned in `install.sh` alongside the other pinned tags; bump
+  them there. cargo isn't provided by any other step, so this step
+  bootstraps a **user-local rustup toolchain** (into `~/.rustup` + `~/.cargo`,
+  `--profile minimal --no-modify-path`, pinned to `$RUST_TOOLCHAIN`) when no
+  cargo `>= $MIN_CARGO_VERSION` is found — note jammy's apt cargo (1.75) is
+  below that floor, so on Ubuntu 22.04 rustup is what supplies the toolchain.
+  The chezmoi'd shell rc is expected to put `~/.cargo/bin` on PATH (same
+  contract as `~/.local/bin`) so `mmdflux` resolves. Idempotency: mmdc is
+  reinstalled unconditionally (npm, cheap); mmdflux is skipped when `cargo
+  install --list` already shows the pinned version.
 
 ## Single source of truth
 Everything install-side lives under `install.sh` + `install.d/`. There is

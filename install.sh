@@ -155,6 +155,20 @@
 #         bashrc aliases `carbonyl` to pin --user-data-dir so cookies
 #         and logins persist across restarts. macOS no-op (no upstream
 #         release; brew has no formula).
+#     - Mermaid tooling (gated by INSTALL_MERMAID, default 1):
+#         * mermaid-cli ('mmdc') via 'npm i -g @mermaid-js/mermaid-cli@<ver>'
+#           (pinned). The official Mermaid->SVG/PNG/PDF renderer; bundles a
+#           headless Chromium via puppeteer. Uninstall with
+#           'npm uninstall -g @mermaid-js/mermaid-cli'.
+#         * mmdflux (Mermaid->terminal text/SVG/JSON, no browser) built from
+#           crates.io via 'cargo install mmdflux --version <ver> --locked',
+#           landing in ~/.cargo/bin/mmdflux. ~/.cargo/bin must be on PATH
+#           (chezmoi's shell rc, same as ~/.local/bin). If no cargo >=
+#           the floor is present, a user-local Rust toolchain is installed
+#           via rustup into ~/.rustup + ~/.cargo (pinned toolchain,
+#           --profile minimal, --no-modify-path). Uninstall mmdflux with
+#           'cargo uninstall mmdflux'; remove ~/.rustup + ~/.cargo to drop
+#           the whole toolchain.
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
@@ -236,6 +250,14 @@
 #                         what `terraform init/plan/apply` uses; terraform-ls
 #                         backs LazyVim's lang.terraform extra (enabled in
 #                         the chezmoi'd lazyvim.json).
+#   INSTALL_MERMAID=0   Skip installing Mermaid tooling (mermaid-cli 'mmdc'
+#                         + mmdflux). Default ON. mmdc via npm (pinned);
+#                         mmdflux via 'cargo install' (pinned), which also
+#                         bootstraps a user-local rustup toolchain if cargo
+#                         is missing. Both 'mmdc' (puppeteer/Chromium SVG
+#                         renderer) and 'mmdflux' (terminal/JSON renderer)
+#                         work on Linux and macOS. ~/.cargo/bin must be on
+#                         PATH for mmdflux (chezmoi's shell rc).
 #
 # To uninstall the apt sources later (Linux; clangd-18 / gh / terraform /
 # terraform-ls binaries remain):
@@ -260,6 +282,7 @@ INSTALL_NERD_FONT="${INSTALL_NERD_FONT:-1}"
 NERD_FONT_NAME="${NERD_FONT_NAME:-JetBrainsMono}"
 INSTALL_TERRAFORM="${INSTALL_TERRAFORM:-1}"
 INSTALL_CARBONYL="${INSTALL_CARBONYL:-1}"
+INSTALL_MERMAID="${INSTALL_MERMAID:-1}"
 
 # LazyVim's minimum supported neovim. Below this, LazyVim aborts with a
 # "Press any key to exit" prompt during startup, which makes plugin sync
@@ -282,6 +305,18 @@ TMUX_SOURCE_VERSION="3.5a"
 # version, and the installer doesn't randomly re-download when upstream
 # publishes a new release.
 NERD_FONT_TAG="v3.4.0"
+
+# Mermaid tooling (step 18), all pinned so re-runs are reproducible:
+#   - mermaid-cli (the 'mmdc' npm package) — bump when you want a newer
+#     official renderer.
+#   - mmdflux crate — built from crates.io via cargo; bump on a new release.
+#   - Rust toolchain rustup installs when no usable cargo is present, plus
+#     the floor an existing cargo must meet to be reused instead of
+#     bootstrapping rustup.
+MERMAID_CLI_VERSION="11.15.0"
+MMDFLUX_VERSION="2.5.0"
+RUST_TOOLCHAIN="1.95.0"
+MIN_CARGO_VERSION="1.85.0"
 
 # Minimum versions for tools whose "just present" gate used to let stale
 # copies win. Below these floors the step force-reinstalls/upgrades rather
@@ -526,6 +561,7 @@ run_step 14-nerd-font.sh
 run_step 15-nvim-venv.sh
 run_step 16-terraform.sh
 run_step 17-carbonyl.sh
+run_step 18-mermaid.sh
 
 # ---------- summary ----------
 # Resolve the clangd we actually wired up — on macOS that's brew's keg-only
@@ -596,6 +632,14 @@ else
     CARBONYL_STATUS="(skipped: INSTALL_CARBONYL=0)"
 fi
 
+if [ "$INSTALL_MERMAID" = "1" ]; then
+    MMDC_STATUS="$(mmdc --version 2>/dev/null || echo missing)"
+    MMDFLUX_STATUS="$(run_as_user "$USER_HOME/.cargo/bin/mmdflux" --version 2>/dev/null || echo missing)"
+else
+    MMDC_STATUS="(skipped: INSTALL_MERMAID=0)"
+    MMDFLUX_STATUS="(skipped: INSTALL_MERMAID=0)"
+fi
+
 if [ "$INSTALL_NERD_FONT" = "1" ]; then
     if [ "$OS" = "linux" ]; then
         FONT_DIR="$USER_HOME/.local/share/fonts/${NERD_FONT_NAME}NerdFont"
@@ -637,6 +681,8 @@ printf "    %-13s %s\n" "terraform:"    "$TERRAFORM_STATUS"
 printf "    %-13s %s\n" "terraform-ls:" "$TERRAFORM_LS_STATUS"
 printf "    %-13s %s\n" "tflint:"       "$TFLINT_STATUS"
 printf "    %-13s %s\n" "carbonyl:"     "$CARBONYL_STATUS"
+printf "    %-13s %s\n" "mmdc:"         "$MMDC_STATUS"
+printf "    %-13s %s\n" "mmdflux:"      "$MMDFLUX_STATUS"
 echo
 if [ "$OS" = "linux" ]; then
     echo "Persistent apt sources added (remove manually to undo):"
