@@ -13,7 +13,12 @@ if [ "$INSTALL_BW" = "1" ]; then
         # latest published version, so no version floor needed here.
         echo "==> Installing/updating Bitwarden CLI via 'npm i -g @bitwarden/cli'"
         npm install -g @bitwarden/cli >/dev/null
-        echo "    bw: $(bw --version 2>/dev/null || echo unknown)"
+        # Probe via run_as_user: `bw` (even `--version`) initializes its data
+        # dir at ~/.config/Bitwarden CLI on first invocation. Running it as
+        # root under sudo would create that dir root-owned (HOME still points
+        # at the target user's home), and the user's later `bw login` then
+        # can't write data.json into it. run_as_user keeps it user-owned.
+        echo "    bw: $(run_as_user bw --version 2>/dev/null || echo unknown)"
     else
         brew_ensure bitwarden-cli "$MIN_BW_VERSION"
     fi

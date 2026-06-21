@@ -597,7 +597,9 @@ else
 fi
 
 if [ "$INSTALL_BW" = "1" ]; then
-    BW_STATUS="$(bw --version 2>/dev/null || echo missing)"
+    # run_as_user: a bare `bw` as root would create ~/.config/Bitwarden CLI
+    # root-owned and break the user's later `bw login` (see install.d/11-bw.sh).
+    BW_STATUS="$(run_as_user bw --version 2>/dev/null || echo missing)"
 else
     BW_STATUS="(skipped: INSTALL_BW=0)"
 fi
