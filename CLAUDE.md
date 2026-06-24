@@ -44,6 +44,16 @@ and any LazyVim plugin specs. The script must never read, edit, or write
 those paths. If a future task seems to require touching one of them, push
 back and route it through chezmoi instead.
 
+The chezmoi **source** (the editable templates that generate those
+dotfiles) lives at `~/.local/share/chezmoi` — a git repo. Tracked names
+are chezmoi-mangled: `dot_` → leading `.`, `private_` = restricted perms,
+`.tmpl` = templated. So the live `~/.config/nvim/init.lua` is sourced from
+`dot_config/nvim/init.lua`, `~/.bashrc` from `private_dot_bashrc.tmpl`,
+etc. When a task legitimately needs the dotfile side, edit the source
+there (not the rendered `$HOME` copy) and let `chezmoi apply` propagate.
+If you're working that side, ask the user to
+`/add-dir ~/.local/share/chezmoi` so it's in context.
+
 ## Contract with the chezmoi config
 
 The script and the chezmoi config meet at a small set of well-known paths.
