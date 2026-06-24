@@ -381,6 +381,31 @@ if [ "$OS" = "linux" ]; then
         echo "Set TARGET_USER to a user that exists in /etc/passwd." >&2
         exit 1
     fi
+
+    # Bind-mount guard for the `drun` container workflow. drun runs the
+    # container with `-v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro`
+    # so Bazel resolves the host user. The catch: useradd/groupadd (called by
+    # apt postinst scripts to create system users/groups, e.g. polkitd) don't
+    # edit those files in place — they write a temp file and rename() it over
+    # the target. You cannot rename() over a bind-mounted file, so the call
+    # fails with EBUSY ("Device or resource busy") and the whole apt step
+    # aborts. We've already dropped the package that triggered this
+    # (software-properties-common -> packagekit -> polkitd), but any future
+    # group-creating dependency would hit the same wall, so detect the mount
+    # up front and explain it rather than leave a cryptic dpkg error.
+    for f in /etc/group /etc/passwd; do
+        # /proc/self/mountinfo field 5 is the mount point (field 2 is the
+        # parent ID); prefer mountpoint(1) when present, fall back to awk.
+        if mountpoint -q "$f" 2>/dev/null \
+           || awk -v t="$f" '$5==t{found=1} END{exit !found}' /proc/self/mountinfo 2>/dev/null; then
+            echo "==> WARNING: $f is a bind mount (read-only drun container?)." >&2
+            echo "    apt postinst scripts that create a *new* system user/group will fail" >&2
+            echo "    with 'rename(): Device or resource busy' (EBUSY) — you can't rename()" >&2
+            echo "    over a bind-mounted file. If apt aborts on a missing user/group, the" >&2
+            echo "    fix is to ensure that group/user already exists on the HOST (so the" >&2
+            echo "    postinst finds it and skips creation), or drop the offending package." >&2
+        fi
+    done
 else
     # macOS: brew refuses to run as root and we have no system-wide writes,
     # so insist on running as the actual user.
