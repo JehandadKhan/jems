@@ -5,10 +5,18 @@ if [ "$OS" = "linux" ]; then
     echo "==> apt prereqs"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
+    # NB: no software-properties-common — nothing here uses
+    # add-apt-repository (every extra apt source is added via a keyring +
+    # .list file in its own step), and the package drags in
+    # packagekit -> polkitd, whose postinst creates the 'polkitd' group by
+    # rename()-ing a temp file over /etc/group. Under the `drun` container
+    # alias /etc/group is a read-only bind mount, so that rename fails with
+    # EBUSY ("Device or resource busy") and aborts the whole apt step. See
+    # the bind-mount preflight guard in install.sh.
     apt-get install -y \
         ninja-build gettext cmake unzip curl wget git \
         build-essential ripgrep ca-certificates \
-        gnupg lsb-release software-properties-common \
+        gnupg lsb-release \
         imagemagick \
         python3-venv python3-pip python3-dev
 else

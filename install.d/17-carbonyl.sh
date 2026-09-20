@@ -24,21 +24,30 @@ if [ "$INSTALL_CARBONYL" = "1" ]; then
             echo "==> carbonyl $CARBONYL_VERSION already installed at $CARBONYL_DIR"
         else
             echo "==> Installing carbonyl $CARBONYL_VERSION to $CARBONYL_DIR"
-            TMP_ZIP="$(mktemp --suffix=.zip)"
-            curl -fsSL -o "$TMP_ZIP" \
+            # Stage the download under the target user's home, not /tmp.
+            # A bare `mktemp` under /tmp creates a 0700 root-owned path when
+            # the script runs via sudo, and the later `run_as_user cp/unzip`
+            # (which drops privs) then can't read inside it (EACCES). Same
+            # gotcha the nerd-font step documents.
+            run_as_user mkdir -p "$USER_HOME/.cache"
+            TMP_DIR="$(run_as_user mktemp -d "$USER_HOME/.cache/carbonyl.XXXXXX")"
+            run_as_user curl -fsSL --retry 3 -o "$TMP_DIR/carbonyl.zip" \
                 "https://github.com/fathyb/carbonyl/releases/download/v${CARBONYL_VERSION}/carbonyl.linux-amd64.zip"
             run_as_user install -d -m 0755 "$CARBONYL_DIR"
-            # The zip wraps everything in carbonyl-<version>/; extract to
-            # a temp dir and move the contents into $CARBONYL_DIR so the
-            # binary lands at $CARBONYL_DIR/carbonyl regardless of the
-            # zip's internal layout in future versions.
-            TMP_DIR="$(mktemp -d)"
-            unzip -q -o "$TMP_ZIP" -d "$TMP_DIR"
-            SRC_DIR="$(find "$TMP_DIR" -maxdepth 2 -name carbonyl -type f -print -quit)"
-            SRC_DIR="$(dirname "$SRC_DIR")"
-            run_as_user cp -r "$SRC_DIR"/* "$CARBONYL_DIR/"
+            # The zip wraps everything in carbonyl-<version>/; extract and
+            # locate the carbonyl binary, then copy its directory's contents
+            # into $CARBONYL_DIR so the binary lands at $CARBONYL_DIR/carbonyl
+            # regardless of the zip's internal layout in future versions.
+            run_as_user unzip -q -o "$TMP_DIR/carbonyl.zip" -d "$TMP_DIR"
+            SRC_BIN="$(find "$TMP_DIR" -maxdepth 2 -name carbonyl -type f -print -quit)"
+            if [ -z "$SRC_BIN" ]; then
+                echo "    ERROR: no 'carbonyl' binary found in the release zip" >&2
+                run_as_user rm -rf "$TMP_DIR"
+                exit 1
+            fi
+            run_as_user cp -r "$(dirname "$SRC_BIN")"/. "$CARBONYL_DIR/"
             echo "$CARBONYL_VERSION" | run_as_user tee "$CARBONYL_DIR/.installed_version" >/dev/null
-            rm -rf "$TMP_ZIP" "$TMP_DIR"
+            run_as_user rm -rf "$TMP_DIR"
         fi
 
         run_as_user install -d -m 0755 "$USER_HOME/.local/bin"
