@@ -84,6 +84,37 @@ Don't break these without updating both sides:
   nvim is launched inside tmux, otherwise `:checkhealth image.nvim` errors
   with "tmux does not have allow-passthrough enabled" and plots never
   render. The chezmoi'd `~/.tmux.conf` is expected to set this.
+- new-notebook creation: `jupytext --to ipynb` writes **no `kernelspec`**
+  into notebook metadata, and jupytext.nvim's `get_ipynb_metadata`
+  (`lua/jupytext/utils.lua:16-17`) indexes both the `io.open` result and
+  `metadata.kernelspec.language` unconditionally. So a missing *or*
+  kernelspec-less `.ipynb` throws in jupytext's `BufReadCmd` and opens as an
+  empty buffer. The chezmoi'd `private_jupytext.lua` fixes both halves:
+  - `init()` seeds any nonexistent `.ipynb` before it is read, via
+    `jupytext --to ipynb --set-kernel`. Contents come from `SEED_LINES` at
+    the top of the spec: a `# %% [markdown]` cheatsheet cell (cell syntax +
+    the main molten keymaps) plus an empty `# %%` code cell. Keep that list
+    in sync with the molten keymaps in `private_molten.lua` — it is the
+    first thing a user reads in a new notebook. The `·` separators are
+    written as `\194\183` byte escapes to keep the file plain ASCII.
+    The seeding **must** be
+    in `init`, not `config`: lazy.nvim runs `config` after the command-line
+    buffer is already being read, so `nvim new.ipynb` would still emit the
+    traceback and only recover afterwards. It sweeps `vim.fn.argv()` for
+    the `nvim new.ipynb` case and registers `BufAdd` for `:edit new.ipynb`.
+    `BufNewFile` does **not** work — jupytext registers `BufReadCmd`, which
+    Neovim fires even for a nonexistent file (a `*Cmd` event takes over the
+    read), so `BufNewFile` never runs.
+  - `config()` adds `:NotebookNew <path> [kernel]` (same seeding, but with a
+    kernel picker, extension/parent-dir handling, and an existing-file
+    guard) and `:NotebookKernels`.
+  Both shell out to `~/.local/share/nvim-venv/bin/{jupyter,jupytext}` before
+  falling back to PATH, because the venv is what `vim.g.python3_host_prog`
+  points at and therefore the kernelspec search path molten resolves against
+  — a brew or project-env `jupyter` reports a different set. The kernel
+  argument is a kernelspec **directory name**, matching what `:MoltenInit`
+  takes; molten's own picker lists `find_kernel_specs().keys()` and never
+  shows `display_name`, which is why `:NotebookKernels` prints both columns.
 - basedpyright vs pyright: this script installs `basedpyright` globally via
   npm (and uninstalls any old `pyright` it finds). The chezmoi'd
   `lua/plugins/lspconfig.lua` is expected to disable `pyright` in its

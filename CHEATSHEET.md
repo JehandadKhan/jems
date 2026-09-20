@@ -142,18 +142,115 @@ Open an `.ipynb` file in Neovim and `jupytext.nvim` converts it on the
 fly to a hydrogen-style Python buffer (`# %%` cell markers). On `:w` it
 saves back to `.ipynb`.
 
-Default molten keymaps (set in the chezmoi'd `lua/plugins/molten.lua`):
+### Picking a kernel
 
-| Key            | Action                       |
-| -------------- | ---------------------------- |
-| `<leader>mi`   | Initialize a Jupyter kernel  |
-| `<leader>ml`   | Evaluate the current line    |
-| `<leader>me`   | Evaluate over a motion       |
-| `<leader>mv`   | Evaluate visual selection    |
-| `<leader>mr`   | Re-evaluate current cell     |
-| `<leader>mo`   | Enter the output window      |
-| `<leader>mh`   | Hide output                  |
-| `<leader>md`   | Delete cell                  |
+`<leader>mi` (bare `:MoltenInit`) opens a kernel picker. It lists
+kernelspec **directory names, not display names** — a kernel registered as
+`--name su_venv --display-name "Python (OpenAI SpinningUP)"` shows up only
+as `su_venv`. That's the usual "my kernel isn't in the list". `:NotebookKernels`
+prints both columns.
+
+Register a project kernel so the nvim venv can see it (`--user` matters;
+`kernel.json` hardcodes the interpreter, so it still runs in the project venv):
+
+```bash
+/path/to/project/.venv/bin/python -m ipykernel install --user \
+    --name myproj --display-name "My Project"
+```
+
+Debugging: query **the nvim venv's** jupyter, not brew's — that's the search
+path molten uses. `~/.local/share/nvim-venv/bin/jupyter kernelspec list`,
+and `jupyter --paths` for the dirs being searched.
+
+### Connecting
+
+`:MoltenInit` dispatches on the shape of its argument:
+
+| Form                                      | What it does                                   |
+| ----------------------------------------- | ---------------------------------------------- |
+| `:MoltenInit` (no args)                   | Picker of available + running kernels          |
+| `:MoltenInit su_venv`                     | Launch that kernelspec by directory name       |
+| `:MoltenInit /path/to/kernel-<id>.json`   | Attach to an **already-running** kernel        |
+| `:MoltenInit https://host:8888`           | Talk to a Jupyter **server** over its REST API |
+| `:MoltenInit shared <kernel_id>`          | Reuse a kernel already running in this nvim    |
+
+To share a live session with JupyterLab, point molten at the connection
+file — `ls -t ~/Library/Jupyter/runtime/kernel-*.json` (newest first).
+Variables are visible in both; it's one kernel process. These count as
+*external* kernels, so `:MoltenDeinit` detaches without killing them.
+
+### Running things
+
+| Key / Command           | Action                                      |
+| ----------------------- | ------------------------------------------- |
+| `<leader>mi`            | Initialize a Jupyter kernel                 |
+| `<leader>ml`            | Evaluate the current line                   |
+| `<leader>me`            | Evaluate over a motion (e.g. `<leader>meip`)|
+| `<leader>mv`            | Evaluate visual selection                   |
+| `<leader>mr`            | Re-evaluate current cell                    |
+| `<leader>mo`            | Enter the output window                     |
+| `<leader>mh`            | Hide output                                 |
+| `<leader>md`            | Delete cell                                 |
+| `:MoltenReevaluateAll`  | Re-run every cell in the buffer             |
+| `:MoltenNext` / `:MoltenPrev` | Jump between cells that have output   |
+| `:MoltenInterrupt`      | Send `SIGINT` to a runaway cell             |
+| `:MoltenRestart`        | Restart the kernel (add `!` to also clear)  |
+| `:MoltenInfo`           | Show attached kernels and their status      |
+| `:MoltenDeinit`         | Detach (leaves an external kernel running)  |
+
+### Outputs and saving
+
+Molten keeps outputs **in memory**, and jupytext writes back only code — so
+a plain `:w` leaves `"outputs": []` in the `.ipynb`.
+
+| Command                | Action                                         |
+| ---------------------- | ---------------------------------------------- |
+| `:MoltenExportOutput`  | Write molten's outputs into the `.ipynb`       |
+| `:MoltenImportOutput`  | Load outputs from the `.ipynb` back into molten|
+| `:MoltenSave` / `:MoltenLoad` | Persist molten's own session state       |
+
+`:MoltenImportOutput` needs the kernel initialized and the cell structure to
+still match the file.
+
+### Creating a new notebook
+
+```bash
+nvim analysis.ipynb                    # just works — seeded on the fly
+```
+
+```vim
+:NotebookNew analysis.ipynb            " same, but pick a kernel interactively
+:NotebookNew analysis.ipynb su_venv    " or name one up front
+```
+
+Opening a nonexistent `.ipynb` seeds it before jupytext reads it: a
+markdown cell with a one-glance cheatsheet (cell syntax + the molten keys
+below), an empty code cell, and the default kernel (first kernelspec
+alphabetically). Delete the markdown cell once the keys are muscle memory.
+`:NotebookNew` is the version that lets you choose; it also appends the
+`.ipynb` extension, creates missing parent dirs, and opens an existing
+file rather than overwriting it.
+
+Both go through `jupytext --to ipynb --set-kernel`. That flag is
+load-bearing: a notebook with no `kernelspec` in its metadata makes
+jupytext.nvim throw on open (`utils.lua:16`) and leaves you an empty
+buffer. The hand-rolled equivalent:
+
+```bash
+printf '# %%%%\n' > seed.py
+jupytext --to ipynb --set-kernel python3 seed.py -o new.ipynb && rm seed.py
+```
+
+Often easier: skip `.ipynb`, write a `# %%`-delimited `.py`, and pair it
+when you need the notebook — much cleaner git diffs:
+
+```bash
+jupytext --set-formats ipynb,py:percent notebook.ipynb
+jupytext --sync notebook.ipynb
+```
+
+The venv provides `jupyter_client` / `ipykernel`, not the JupyterLab
+**server**; `jupyter lab` is a separate install. Molten only needs a kernel.
 
 ### Image rendering
 
@@ -164,6 +261,15 @@ terminal that speaks the Kitty graphics protocol — that means **kitty**,
 text output and DataFrames still display fine; only inline image
 previews are disabled. Inside tmux you also need `allow-passthrough on`
 in `~/.tmux.conf` (the chezmoi'd tmux config sets this).
+
+### When `:MoltenInit` is undefined
+
+molten is a python remote plugin — its commands only exist after
+`:UpdateRemotePlugins` writes `~/.local/share/nvim/rplugin.vim`. If the
+commands are missing, grep that file for `molten`; an absent block means
+pynvim isn't reachable from `vim.g.python3_host_prog`. Check
+`:checkhealth provider.python` — it should point at
+`~/.local/share/nvim-venv/bin/python`.
 
 ## PDF viewing (pdfreader.nvim)
 
