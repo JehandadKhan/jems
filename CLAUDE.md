@@ -309,3 +309,60 @@ needs to be on PATH — and that's the chezmoi'd shell rc's job. If a
 future task is "clangd LSP not attaching on macOS", the first thing to
 check is `which clangd` from the same shell that launches nvim — if it
 returns nothing, the chezmoi config isn't putting `~/.local/bin` on PATH.
+
+## Backlog / not yet implemented
+
+### PDF viewing in nvim
+Idea, not built. Verified 2026-09-20 on macOS (nvim 0.12.2, brew poppler
+26.09.0). Two viable routes; both need **poppler** installed here, and
+config on the chezmoi side.
+
+**Route A — text-only, no plugin.** A `BufReadCmd` autocmd on `*.pdf`
+piping through `pdftotext -layout` into a `nofile` buffer. Tested
+end-to-end and working:
+
+```lua
+vim.api.nvim_create_autocmd("BufReadCmd", {
+  pattern = "*.pdf",
+  callback = function(a)
+    -- 2>/dev/null: pdftotext writes syntax warnings to stderr and
+    -- systemlist() would fold them into the buffer text.
+    local out = vim.fn.systemlist(
+      { "sh", "-c", 'pdftotext -layout "$1" - 2>/dev/null', "sh", a.file })
+    if vim.v.shell_error ~= 0 then out = { "pdftotext failed" } end
+    vim.api.nvim_buf_set_lines(a.buf, 0, -1, false, out)
+    vim.bo[a.buf].buftype    = "nofile"
+    vim.bo[a.buf].filetype   = "text"
+    vim.bo[a.buf].modified   = false
+    vim.bo[a.buf].modifiable = false
+  end,
+})
+```
+
+Two traps found while testing, both cost real time:
+- **Must be synchronous.** An async `jobstart` version loses the race —
+  nvim fills the buffer with the raw PDF bytes before the job returns.
+- The autocmd must be registered **before** the file is opened. Loading
+  it via `nvim -S after.lua file.pdf` is too late (`BufReadCmd` has
+  already fired) and silently shows raw bytes; from a normal chezmoi'd
+  init it's fine. Repro with `nvim --headless -u spec.lua file.pdf`,
+  not `-S`.
+
+**Route B — rendered pages.** `r-pletnev/pdfreader.nvim` (exists;
+standard/dark/text modes, bookmarks). Note it renders via
+**`folke/snacks.nvim`, not `image.nvim`** — snacks is already in LazyVim
+core (`lua/lazyvim/plugins/init.lua`), so no extra plugin dep, but this
+does *not* reuse the image.nvim path the Jupyter stack uses. It also
+wants ImageMagick (have it) + **ghostscript** (not currently installed)
+and falls back to text mode outside kitty/ghostty.
+`StefanBartl/pdfport.nvim` also exists but drags in the author's
+`lib.nvim`; not worth it. Raw rasterizing works if you'd rather
+hand-roll against image.nvim: `pdftoppm -png -r 72 in.pdf out` →
+verified PNG.
+
+Install-side work when this gets picked up: add poppler (macOS
+`brew_ensure poppler`; Linux `poppler-utils` — confirmed to carry both
+`pdftotext` and `pdftoppm` on jammy) to `install.d/01-system-prereqs.sh`,
+or a new step gated by an `INSTALL_PDF` toggle like the other optional
+steps. Add `ghostscript` only if Route B is chosen. The nvim plugin spec
+/ autocmd itself is chezmoi territory, not this repo.
