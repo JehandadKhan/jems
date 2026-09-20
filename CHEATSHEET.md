@@ -165,6 +165,64 @@ text output and DataFrames still display fine; only inline image
 previews are disabled. Inside tmux you also need `allow-passthrough on`
 in `~/.tmux.conf` (the chezmoi'd tmux config sets this).
 
+## PDF viewing (pdfreader.nvim)
+
+Just `nvim file.pdf` — the plugin hooks `BufEnter` on `*.pdf` and renders
+the page, so there's no command to run first. Pages are rasterized with
+ImageMagick (which shells out to ghostscript) and displayed through
+`snacks.image`; `poppler` supplies the page count and the text mode.
+
+| Key | Action                          |
+| --- | ------------------------------- |
+| `n` | Next page                       |
+| `p` | Previous page                   |
+| `z` | Zoom in                         |
+| `q` | Zoom out (**not** quit)         |
+| `e` | Zoom reset                      |
+
+`q` is bound to zoom-out inside a PDF buffer, so use `:q` to close.
+
+If `n` gives you `E486: Pattern not found` instead of turning the page,
+pdfreader didn't attach to the buffer and `n` is still Vim's next-match.
+Check `:lua print(vim.bo.filetype)` — it should say `pdf`; `markdown`
+means `snacks.image` grabbed the file first. See the PDF section in
+CLAUDE.md for the two spec settings that prevent this.
+
+| Command                                     | Action                     |
+| ------------------------------------------- | -------------------------- |
+| `:PDFReader setViewMode {standard,dark,text}` | Switch render mode       |
+| `:PDFReader setPage {n}`                    | Jump to page               |
+| `:PDFReader showToc`                        | Table of contents          |
+| `:PDFReader addBookmark [{n}][,comment]`    | Bookmark a page            |
+| `:PDFReader showBookmarks`                  | Bookmark picker            |
+| `:PDFReader showRecentBooks`                | Recently opened PDFs       |
+| `:PDFReader redrawPage`                     | Re-render current page     |
+| `:PDFReader setAutosave {on,off}`           | Toggle state autosave      |
+| `:PDFReader saveState` / `clearState`       | Force save / wipe state    |
+
+`setViewMode dark` inverts to a dark background — the one to use on
+white-background papers. `setViewMode text` swaps the rendered page for
+`pdftotext` output: no images and layout is approximated with spaces,
+but it's searchable, yankable, and works in any terminal (including over
+ssh). Text mode returns nothing on scanned PDFs, which have no text
+layer to extract.
+
+**Use kitty.** Rendering needs the Kitty graphics protocol *plus* its
+unicode-placeholder extension, which anchors images to cells in the text
+grid so the terminal clips them correctly. kitty and ghostty support
+placeholders; **wezterm does not** (see `placeholders = false` in
+snacks' `lua/snacks/image/terminal.lua`). Without them snacks falls back
+to absolute positioning and pages get painted over the statusline,
+splits, and tabline, with tmux making it worse. That's a terminal
+capability gap, not a config error — text mode still behaves fine
+everywhere.
+
+Note pdfreader's own `validation.lua` hardcodes a `{ "kitty", "ghostty" }`
+allowlist and matches it against `$TERM`, which fails inside tmux
+(`$TERM=tmux-256color`) even in kitty. The chezmoi'd
+`lua/plugins/pdfreader.lua` overrides that check to delegate to snacks'
+terminal detection instead, which handles the tmux passthrough case.
+
 ## carbonyl (Chromium-in-the-terminal browser)
 
 `carbonyl URL` renders any web page directly in the terminal (great for

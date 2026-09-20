@@ -44,6 +44,7 @@
 #
 #   Linux (Ubuntu/Debian, requires sudo):
 #     - apt packages: build deps, ripgrep, gnupg helpers, imagemagick,
+#         poppler-utils (pdftotext/pdfinfo/pdftoppm, for PDF-in-nvim),
 #         python3-venv / python3-pip / python3-dev, tmux (if INSTALL_TMUX=1)
 #     - NodeSource apt repo + key (installed via 'curl | bash' from
 #         deb.nodesource.com — a remote script piped to root bash)
@@ -68,7 +69,8 @@
 #
 #   macOS (Homebrew, runs as your user):
 #     - brew formulae installed if missing: neovim, node, ripgrep, ninja,
-#         cmake, gettext, imagemagick, llvm (for clangd), chezmoi, gh,
+#         cmake, gettext, imagemagick, poppler (for PDF-in-nvim), llvm
+#         (for clangd), chezmoi, gh,
 #         tmux, starship, hashicorp/tap/terraform, hashicorp/tap/terraform-ls,
 #         tflint. Existing versions are left alone (the script does not
 #         'brew upgrade'). chezmoi/gh/tmux/starship and the terraform
@@ -725,7 +727,7 @@ if [ "$OS" = "linux" ]; then
         echo "    /etc/apt/keyrings/hashicorp.gpg"
     fi
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick llvm chezmoi gh bitwarden-cli tmux starship hashicorp/tap/terraform hashicorp/tap/terraform-ls tflint"
+    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick poppler llvm chezmoi gh bitwarden-cli tmux starship hashicorp/tap/terraform hashicorp/tap/terraform-ls tflint"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"

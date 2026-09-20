@@ -18,13 +18,14 @@ if [ "$OS" = "linux" ]; then
         build-essential ripgrep ca-certificates \
         gnupg lsb-release \
         imagemagick \
+        poppler-utils \
         python3-venv python3-pip python3-dev
 else
     # macOS: install only what's missing so we don't gratuitously upgrade
     # tools the user is pinning. Xcode CLT (git, curl, make) is pulled in
     # by brew on its first install.
     echo "==> brew prereqs"
-    BREW_FORMULAE=(ninja cmake gettext ripgrep imagemagick)
+    BREW_FORMULAE=(ninja cmake gettext ripgrep imagemagick poppler)
     if ! command -v python3 >/dev/null 2>&1; then
         BREW_FORMULAE+=(python)
     fi
