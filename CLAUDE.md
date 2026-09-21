@@ -135,7 +135,14 @@ Don't break these without updating both sides:
   npm (and uninstalls any old `pyright` it finds). The chezmoi'd
   `lua/plugins/lspconfig.lua` is expected to disable `pyright` in its
   servers table — running both against the same buffer leads to duplicate
-  diagnostics if LazyVim's `lang.python` extra is enabled.
+  diagnostics if LazyVim's `lang.python` extra is enabled. It must also set
+  `basedpyright = { mason = false }` so the npm binary wins over a Mason
+  copy. Note a missing `pyright = { enabled = false }` does **not** look
+  broken: basedpyright's npm package ships its own `pyright` /
+  `pyright-langserver` shims (symlinks into `node_modules/basedpyright`), so
+  LazyVim's default pyright config resolves to a binary that runs — you just
+  get basedpyright's engine under pyright's defaults instead of the fork's
+  stricter ones. `:LspInfo` naming `pyright` is the tell.
 - bazel helper: `~/.local/bin/bazel-compile-commands` is installed by this
   script and references `~/.local/share/bazel-compile-commands-extractor`
   via a Bazel `local_path_override`, so it has no network deps at run time.
