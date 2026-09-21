@@ -184,19 +184,46 @@ Variables are visible in both; it's one kernel process. These count as
 | Key / Command           | Action                                      |
 | ----------------------- | ------------------------------------------- |
 | `<leader>mi`            | Initialize a Jupyter kernel                 |
+| `<leader>mc`            | Run the `# %%` cell under the cursor        |
+| `<leader>mn`            | Run the cell, then jump to the next one     |
 | `<leader>ml`            | Evaluate the current line                   |
 | `<leader>me`            | Evaluate over a motion (e.g. `<leader>meip`)|
 | `<leader>mv`            | Evaluate visual selection                   |
-| `<leader>mr`            | Re-evaluate current cell                    |
+| `<leader>mr`            | Re-evaluate current cell (runs it if new)   |
+| `<leader>mR`            | Re-evaluate every cell in the buffer        |
 | `<leader>mo`            | Enter the output window                     |
-| `<leader>mh`            | Hide output                                 |
+| `<leader>mh`            | Hide output (float + inline)                |
+| `<leader>mt`            | Toggle inline virtual-text output           |
 | `<leader>md`            | Delete cell                                 |
-| `:MoltenReevaluateAll`  | Re-run every cell in the buffer             |
 | `:MoltenNext` / `:MoltenPrev` | Jump between cells that have output   |
 | `:MoltenInterrupt`      | Send `SIGINT` to a runaway cell             |
 | `:MoltenRestart`        | Restart the kernel (add `!` to also clear)  |
 | `:MoltenInfo`           | Show attached kernels and their status      |
 | `:MoltenDeinit`         | Detach (leaves an external kernel running)  |
+
+#### "Not in a cell"
+
+Molten has no idea what `# %%` means. A *cell*, to molten, is an
+extmark-backed span created by an evaluate call, and `<leader>mr`
+(`:MoltenReevaluateCell`) looks for a span containing the cursor — so
+re-evaluating a cell you have never run errors with `Not in a cell`.
+`<leader>mc` is what turns the `# %%` block under the cursor into such a
+span; `<leader>mr` falls back to it automatically, so in practice either
+key works. `:MoltenInfo` lists the spans molten is actually tracking.
+
+The spans are extmarks, so they do not survive reopening the file: the
+`# %%` markers come back but the tracking does not. Re-run the cell, or
+persist the session with `:MoltenSave` / `:MoltenLoad`.
+
+#### Hiding output
+
+`<leader>mh` hides both the floating window and the inline text.
+`:MoltenHideOutput` on its own only hides the *float* — with
+`molten_virt_text_output` on (our default), molten repaints the inline
+text on every interface update, including the one `:MoltenHideOutput`
+itself triggers. `<leader>mt` toggles inline output off and on; toggling
+it back on **re-runs the cells**, because molten exposes no way to
+repaint virtual text without re-executing.
 
 ### Outputs and saving
 

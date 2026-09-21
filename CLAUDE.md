@@ -327,6 +327,48 @@ user's first `nvim` run. If `:MoltenInit` is undefined after that, grep
 `~/.local/share/nvim/rplugin.vim` for `molten` — a missing block means
 pynvim isn't reachable from `vim.g.python3_host_prog`.
 
+### Molten cells are extmarks, not `# %%` markers
+Molten has no parser for `# %%` — a *cell* is a `CodeCell` whose bounds are
+`DynamicPosition`s, i.e. literal `nvim_buf_set_extmark` ids
+(`rplugin/python3/molten/position.py`). `:MoltenReevaluateCell` searches those
+spans for one containing the cursor and errors `Not in a cell` when none match
+(`__init__.py`, `moltenbuffer.py:reevaluate_cell`). So a buffer full of `# %%`
+markers has **zero** cells until something evaluates a range.
+
+The chezmoi'd `private_molten.lua` bridges the two: it finds the `# %%` block
+under the cursor and calls `vim.fn.MoltenEvaluateRange(start, stop)` (1-indexed,
+inclusive), which is the documented entry point that routes to `_do_evaluate`
+and registers the extmarks. Don't reach for `:MoltenEvaluateArgument` instead —
+it goes to `_do_evaluate_expr`, which runs code with no buffer span and
+therefore creates no cell.
+
+Two consequences worth keeping in mind:
+- Spans don't survive reopening the file; the markers come back, the tracking
+  doesn't. `:MoltenSave` / `:MoltenLoad` is the persistence story.
+- Anything that clears molten's extmark namespace wholesale destroys the cells.
+  `molten-extmarks` holds both the output virt-text marks *and* the
+  `DynamicPosition` cell bounds, so a blanket `nvim_buf_clear_namespace()`
+  reintroduces `Not in a cell`. The three kinds are distinguishable: cell bounds
+  are bare marks, float spacing carries `virt_lines` of empty strings, real
+  output carries `virt_lines` with non-empty text.
+
+### `:MoltenHideOutput` can't hide virtual-text output
+It only sets `should_show_floating_win = False` — that is the *floating window*.
+With `vim.g.molten_virt_text_output` on (our default), output is drawn as
+virtual text by a separate path, and `update_interface()` unconditionally
+re-runs `show_virtual_output()` for every cell while the option is set
+(`moltenbuffer.py`). Since `:MoltenHideOutput` itself ends by calling
+`_update_interface()`, it clears the float flag and immediately repaints the
+inline text.
+
+Hiding needs the option flipped off (`MoltenUpdateOption`) *and* the
+already-drawn marks deleted — see the namespace note above for why that
+deletion has to be selective. Toggling inline output back on re-runs the cells:
+`show_virtual_output()` early-returns when a cell is DONE and still holds a
+`virt_text_id`, and `clear_virt_output()` never resets that id, so molten
+exposes no repaint-without-execute path. The upstream fix is a one-liner
+(`self.virt_text_id = None` in `clear_virt_output`) if it's ever worth a PR.
+
 ### Why we don't run headless sync from this script
 Earlier triage on macOS: `nvim --headless +Lazy! sync +qa` hung for >2
 minutes at 0% CPU. `sample` showed the stack ending in
