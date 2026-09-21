@@ -108,6 +108,22 @@ Don't break these without updating both sides:
   - `config()` adds `:NotebookNew <path> [kernel]` (same seeding, but with a
     kernel picker, extension/parent-dir handling, and an existing-file
     guard) and `:NotebookKernels`.
+  - The same `BufReadCmd` takeover also stops the **LSP** from ever loading in
+    a notebook. LazyVim lazy-loads `nvim-lspconfig` on `BufReadPre`; because
+    jupytext's `*Cmd` handler takes over the read, `BufReadPre` never fires for
+    `*.ipynb`, lspconfig is never loaded, no client attaches, and nvim-cmp
+    silently degrades to buffer-word completion (the symptom is "autocomplete
+    only offers words already in the file"). `init()` works around it by
+    force-loading lspconfig and re-firing `FileType` on the converted buffer.
+    Both halves are needed: loading lspconfig alone is too late (its own
+    `FileType` hook already missed the buffer) and re-firing `FileType` alone
+    does nothing while lspconfig is unloaded. It also needs **two** entry
+    points — `BufReadPost`/`BufAdd` for `:edit foo.ipynb`, and `VimEnter` +
+    a `vim.fn.argv()` sweep for `nvim foo.ipynb`, since a file named on the
+    command line is read before any lazy-loaded plugin can register an
+    autocmd. Testing only the `:edit` path will look like success while the
+    command-line path stays broken; verify with
+    `nvim foo.ipynb` then `:lua =#vim.lsp.get_clients({bufnr=0})`.
   Both shell out to `~/.local/share/nvim-venv/bin/{jupyter,jupytext}` before
   falling back to PATH, because the venv is what `vim.g.python3_host_prog`
   points at and therefore the kernelspec search path molten resolves against

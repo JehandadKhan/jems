@@ -271,6 +271,28 @@ pynvim isn't reachable from `vim.g.python3_host_prog`. Check
 `:checkhealth provider.python` — it should point at
 `~/.local/share/nvim-venv/bin/python`.
 
+### When completion in a notebook only offers words from the file
+
+That is nvim-cmp falling back to its `buffer` source because **no LSP is
+attached**. Check with `:lua =#vim.lsp.get_clients({bufnr=0})` inside the
+notebook — `0` means the language server never started for that buffer.
+
+The cause is a load-order trap: LazyVim lazy-loads `nvim-lspconfig` on
+`BufReadPre`, but jupytext registers a `BufReadCmd` for `*.ipynb`, and a
+`*Cmd` autocmd *takes over* the read — so `BufReadPre` never fires and
+lspconfig is never loaded. The chezmoi'd `private_jupytext.lua` works
+around this by force-loading lspconfig and re-firing `FileType` once the
+buffer has been converted. If it regresses, note that the workaround needs
+**two** entry points: `BufReadPost`/`BufAdd` for `:edit foo.ipynb`, and a
+`VimEnter` + `vim.fn.argv()` sweep for `nvim foo.ipynb`, where the file is
+read before any lazy-loaded plugin can register an autocmd. Testing only
+the `:edit` path will look like success while the command-line path stays
+broken.
+
+Completions resolve against the interpreter basedpyright picks, so a venv
+that is not discoverable from the project root gives stdlib completions but
+none for third-party packages. Launch nvim from the project root.
+
 ## PDF viewing (pdfreader.nvim)
 
 Just `nvim file.pdf` — the plugin hooks `BufEnter` on `*.pdf` and renders
