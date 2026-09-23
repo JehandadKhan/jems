@@ -369,6 +369,53 @@ deletion has to be selective. Toggling inline output back on re-runs the cells:
 exposes no repaint-without-execute path. The upstream fix is a one-liner
 (`self.virt_text_id = None` in `clear_virt_output`) if it's ever worth a PR.
 
+### Debugging cells (`<leader>mD`)
+Molten has no debugger; ipykernel does — the one JupyterLab drives, reached as
+DAP messages wrapped in `debug_request` on the kernel's **control** channel. The
+chezmoi'd config bridges nvim-dap to it, attached to the kernel molten already
+started, so cells still run through molten and output still renders inline.
+Built 2026-09-23, verified by driving nvim in tmux (breakpoint hit in the notebook
+buffer, locals, step, continue, output, terminate, re-attach, edited cell).
+
+Pieces (all chezmoi side; nothing install-side — `debugpy` is an ipykernel
+dependency, so every kernel env and the nvim-venv already have it):
+- `dot_config/nvim/scripts/nb_dap_bridge.py` — stdio DAP adapter, run with the
+  nvim-venv python. Also maps lines: ipykernel compiles each cell as
+  `$TMPDIR/ipykernel_<pid>/<murmur2(cell text)>.py`, so before every run Lua
+  sends a custom `nbRegisterCells` request with each `# %%` cell's text + start
+  line; the bridge `dumpCell`s them to learn the paths, splits `.ipynb`
+  breakpoints across them, and rewrites stack frames back to notebook lines.
+- `private_molten.lua` — `debug_cell()` on `<leader>mD`; finds molten's kernel
+  via `ps` ancestry (the ipykernel whose `-f` connection file descends from this
+  nvim's pid — molten exposes no API for it); `lazyvim.json` enables `dap.core`.
+
+Traps found while building it — each one looked like success at first:
+- **Cell text must match byte-for-byte** what molten sends
+  (`MoltenEvaluateRange` over whole lines, `"\n"`-joined), or the hash differs
+  and breakpoints silently don't bind. The bridge compares against the
+  `execute_input` it sees on iopub and emits an `nbWarning` event on mismatch.
+- **Molten marks cells Done early.** molten's `runtime.py` tick consumes every
+  iopub message with no `parent_header` check, and any `status: idle` ends the
+  current cell. Every DAP request is a control message and publishes busy/idle;
+  worse, attach makes ipykernel send *itself* a silent `execute_request` (to
+  start debugpy) whose idle sits in molten's backlog. Symptom: `Out[...]: ✓
+  Done` while paused, real output lost. A msg_type filter is *not* enough (case
+  two is an execute_request); `private_molten.lua` patches molten to record its
+  own execute msg_ids and drop everything else. Applied in `init` each startup,
+  reverted on `LazyUpdatePre`/`LazySyncPre`/`LazyRestorePre` because lazy.nvim
+  updates with a non-forced `git checkout` that a dirty file would block. If
+  upstream changes the anchor lines it warns instead of half-patching.
+- **Terminate killed the kernel.** nvim-dap ends attach sessions with
+  `terminate` or `disconnect{terminateDebuggee=true}`; debugpy obeys by killing
+  the process it's in — the kernel. molten then shows `* On Hold` forever. The
+  bridge always sends `disconnect{terminateDebuggee=false}` and hides
+  `supportsTerminateRequest`.
+
+Behavior to expect: while a session is attached, breakpoints also fire on a
+plain `<leader>mc`, and on functions defined by cells run earlier (all cells are
+registered, keyed by text) — but only for cells whose text hasn't changed since
+they ran. `<leader>dt` detaches; the cell resumes and finishes.
+
 ### Why we don't run headless sync from this script
 Earlier triage on macOS: `nvim --headless +Lazy! sync +qa` hung for >2
 minutes at 0% CPU. `sample` showed the stack ending in
