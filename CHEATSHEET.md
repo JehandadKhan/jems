@@ -225,6 +225,48 @@ itself triggers. `<leader>mt` toggles inline output off and on; toggling
 it back on **re-runs the cells**, because molten exposes no way to
 repaint virtual text without re-executing.
 
+### Debugging cells
+
+Line-by-line debugging against the kernel molten is already running — no
+`debugpy.listen()` in a cell, and breakpoints go in the notebook buffer itself.
+
+| Key           | Action                                                    |
+| ------------- | --------------------------------------------------------- |
+| `<leader>db`  | Toggle breakpoint on the current line                     |
+| `<leader>dB`  | Conditional breakpoint                                    |
+| `<leader>mD`  | Debug the cell under the cursor (attaches on first use)   |
+| `<leader>dO`  | Step over                                                 |
+| `<leader>di`  | Step into                                                 |
+| `<leader>do`  | Step out                                                  |
+| `<leader>dc`  | Continue                                                  |
+| `<leader>dC`  | Run to cursor                                             |
+| `<leader>de`  | Evaluate expression under cursor / selection (float)      |
+| `<leader>du`  | Toggle the debugger panes                                 |
+| `<leader>dt`  | Stop debugging (detaches; the cell finishes, kernel lives)|
+
+Typical flow: `<leader>mi`, run your setup cells with `<leader>mc`, put a
+breakpoint with `<leader>db` (anywhere — inside a function defined in an
+earlier cell works), then `<leader>mD` on the cell that calls it. The cursor
+stops in the notebook; locals are in the left pane; output still renders
+inline when the cell finishes.
+
+Things to know:
+- While a session is attached, breakpoints fire on plain `<leader>mc` runs
+  too. `<leader>dt` to go back to normal running.
+- Breakpoints bind only in cells whose text hasn't changed since they last
+  ran — edit a function's cell, re-run it before debugging into it.
+- Large containers: the Scopes pane wraps long values; expanding a list shows
+  100 children and a `more` node (expand it for the next 100). For a slice,
+  type into the REPL pane (`dap>`): `big[4000:4050]`. Inline values in the
+  code are cut at 60 characters.
+- Output printed while you step can arrive split across lines (`z =` / `41`).
+  Cosmetic.
+- `<leader>db` / `<leader>mD` do nothing in an nvim started before the debugger
+  config existed — restart it.
+- Debugging relies on a **local patch to molten** (see CLAUDE.md, "Debugging
+  cells"). If a molten update breaks it you get a startup warning, and paused
+  cells will show `✓ Done` with their output lost.
+
 ### Outputs and saving
 
 Molten keeps outputs **in memory**, and jupytext writes back only code — so

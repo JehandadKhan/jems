@@ -388,23 +388,16 @@ dependency, so every kernel env and the nvim-venv already have it):
 - `private_molten.lua` — `debug_cell()` on `<leader>mD`; finds molten's kernel
   via `ps` ancestry (the ipykernel whose `-f` connection file descends from this
   nvim's pid — molten exposes no API for it); `lazyvim.json` enables `dap.core`.
+  It also carries the **molten patch** (subsection below).
+- `private_dap.lua` — dap-ui / virtual-text tuning for large values.
 
 Traps found while building it — each one looked like success at first:
 - **Cell text must match byte-for-byte** what molten sends
   (`MoltenEvaluateRange` over whole lines, `"\n"`-joined), or the hash differs
   and breakpoints silently don't bind. The bridge compares against the
   `execute_input` it sees on iopub and emits an `nbWarning` event on mismatch.
-- **Molten marks cells Done early.** molten's `runtime.py` tick consumes every
-  iopub message with no `parent_header` check, and any `status: idle` ends the
-  current cell. Every DAP request is a control message and publishes busy/idle;
-  worse, attach makes ipykernel send *itself* a silent `execute_request` (to
-  start debugpy) whose idle sits in molten's backlog. Symptom: `Out[...]: ✓
-  Done` while paused, real output lost. A msg_type filter is *not* enough (case
-  two is an execute_request); `private_molten.lua` patches molten to record its
-  own execute msg_ids and drop everything else. Applied in `init` each startup,
-  reverted on `LazyUpdatePre`/`LazySyncPre`/`LazyRestorePre` because lazy.nvim
-  updates with a non-forced `git checkout` that a dirty file would block. If
-  upstream changes the anchor lines it warns instead of half-patching.
+- **Molten marks cells Done early** — fixed by a local patch to molten; see
+  the next subsection before touching molten.
 - **Terminate killed the kernel.** nvim-dap ends attach sessions with
   `terminate` or `disconnect{terminateDebuggee=true}`; debugpy obeys by killing
   the process it's in — the kernel. molten then shows `* On Hold` forever. The
@@ -415,6 +408,80 @@ Behavior to expect: while a session is attached, breakpoints also fire on a
 plain `<leader>mc`, and on functions defined by cells run earlier (all cells are
 registered, keyed by text) — but only for cells whose text hasn't changed since
 they ran. `<leader>dt` detaches; the cell resumes and finishes.
+
+Debugger UI (`private_dap.lua`): dap-ui's stock Scopes pane is a fixed 40
+columns with unwrapped values, so big lists were cut at the border, and
+nvim-dap-virtual-text wrote whole reprs inline into the code. The spec sets
+dap-ui `wrap = true` (must be dap-ui's own option — it sets `'wrap'` per window
+after the buffer is shown, so a `FileType`/`BufWinEnter` autocmd loses), makes
+the sidebar 33% of the width with Scopes at 55% of it, and caps inline values
+at 60 chars via `display_callback`. Children paging (100 + a `more` node) is
+debugpy's behaviour, not a bug.
+
+### ⚠ Local patch to molten-nvim — read before updating molten
+The cell debugger depends on a **patch to molten's own source**, applied by the
+chezmoi'd `private_molten.lua` (`MOLTEN_PATCHES`, `patch_molten`,
+`unpatch_molten`). Anyone updating molten, pinning a new version, or debugging
+"cell output vanished" must know it exists.
+
+**Why.** molten's `JupyterRuntime.tick()` (`rplugin/python3/molten/runtime.py`)
+feeds every iopub message to the current output with no `parent_header` check,
+and any `status: idle` ends the current cell. With a debugger attached that is
+wrong twice: every DAP request is a control message and publishes busy/idle,
+and on attach ipykernel sends *itself* a silent `execute_request` (to start
+debugpy) whose idle sits in molten's backlog until the next cell is queued.
+Symptom without the patch: `Out[...]: ✓ Done` while paused at a breakpoint,
+the real output dropped or pinned to the next cell. A msg_type filter was
+tried and is **not** enough (the second case is an `execute_request`).
+
+**What.** Two hunks, marked `# [nvim-config] own-execute filter`:
+```diff
+     def run_code(self, code: str) -> None:
+-        self.kernel_client.execute(code)
++        msg_id = self.kernel_client.execute(code)
++        # [nvim-config] own-execute filter
++        if msg_id:
++            self.__dict__.setdefault("_nvim_own_ids", set()).add(msg_id)
+ ...
+                 if "content" not in message or "msg_type" not in message:
+                     continue
++                # [nvim-config] own-execute filter
++                own = self.__dict__.get("_nvim_own_ids")
++                if own is not None and (message.get("parent_header") or {}).get("msg_id") not in own:
++                    continue
+```
+The remote jupyter-server client (`jupyter_server_api.py`) returns no msg_id
+from `execute`, so `own` stays `None` there and that path is unfiltered, as
+upstream.
+
+**Lifecycle.**
+- Applied from the spec's `init` on **every nvim startup** (idempotent: skipped
+  if the marker is present). `init` runs before molten's python host imports
+  the file, so the running host always has it.
+- Reverted (`git checkout -- runtime.py` in the plugin dir) on the
+  `User LazyUpdatePre` / `LazySyncPre` / `LazyRestorePre` events, because
+  lazy.nvim updates with a plain, non-forced `git checkout` that a dirty file
+  would block. Consequence: right after a `:Lazy update` the *current* session
+  may run unpatched molten code if the host restarts; the next startup
+  re-patches.
+- All-or-nothing: if either anchor string is missing (upstream edited those
+  lines) it patches nothing and warns at startup: "molten iopub patch no
+  longer applies". Nothing else breaks — only debugging loses cell output.
+
+**When molten updates.**
+1. Start nvim; if the warning appears, open the new `runtime.py`, re-find the
+   `run_code` execute call and the `"content" not in message` guard in `tick`,
+   and update the anchors/bodies in `MOLTEN_PATCHES`.
+2. Check upstream first: if molten now filters iopub by parent msg_id itself,
+   delete the patch machinery instead.
+3. Verify: `git -C ~/.local/share/nvim/lazy/molten-nvim diff` shows the two
+   hunks; then in a notebook set a breakpoint, `<leader>mD`, and confirm the
+   cell reads `... Running` while paused and shows its output after
+   `<leader>dc`.
+
+**Upstream.** Worth a PR to benlubas/molten-nvim: track the execute msg_id per
+output and ignore foreign iopub messages. That also fixes molten sharing a
+kernel with any other client (e.g. JupyterLab via `:MoltenInit <json>`).
 
 ### Why we don't run headless sync from this script
 Earlier triage on macOS: `nvim --headless +Lazy! sync +qa` hung for >2
