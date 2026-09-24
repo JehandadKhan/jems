@@ -6,8 +6,8 @@ that `install-lazyvim.sh` (plus the chezmoi'd config) sets up. See
 
 ## Code navigation
 
-The script enables `clangd` and `basedpyright` against LazyVim defaults —
-no custom LSP keymaps. The bindings you'll reach for most:
+The script enables `clangd` and `basedpyright` against LazyVim defaults, plus
+two Python keys (type annotations, below). The bindings you'll reach for most:
 
 | Action                              | Key                  |
 | ----------------------------------- | -------------------- |
@@ -25,7 +25,18 @@ no custom LSP keymaps. The bindings you'll reach for most:
 | Workspace symbols (project-wide)    | `<leader>sS`         |
 | Diagnostics list (Trouble)          | `<leader>xx`         |
 | Inlay hints toggle                  | `<leader>uh`         |
+| Add inferred types: line / selection (Python) | `<leader>ct` |
+| Add inferred types: whole buffer (Python)     | `<leader>cT` |
 | Switch `.cc` ↔ `.h` (clangd)        | `:LspClangdSwitchSourceHeader` |
+
+`<leader>ct` / `<leader>cT` turn basedpyright's grey type hints
+(`big: list[int]`, `-> int`) into real annotations, adding any imports they
+need once, after the first import block (in a notebook: inside the first
+code cell, never above the jupytext header). Skipped on purpose: bare `Any`
+hints (they document nothing) and parameter-name hints (`line=`). Run it
+again and nothing changes. Undo is one `u`. It is on demand, not on save —
+review what it inferred; `dict[Any, Any]` usually means you should write the
+real type yourself.
 
 Project-wide file / text search (Telescope / Snacks picker):
 

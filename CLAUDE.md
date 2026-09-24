@@ -143,6 +143,18 @@ Don't break these without updating both sides:
   LazyVim's default pyright config resolves to a binary that runs — you just
   get basedpyright's engine under pyright's defaults instead of the fork's
   stricter ones. `:LspInfo` naming `pyright` is the tell.
+  The same spec adds `<leader>ct`/`<leader>cT` (basedpyright server `keys`):
+  apply basedpyright's type inlay hints as annotations. basedpyright attaches
+  LSP `textEdits` to type hints (VS Code's double-click-to-insert); raw, each
+  hint also carries its own import edit aimed at line 0, so they are filtered
+  (type hints only, bare `Any` skipped), imports deduped/merged and moved after
+  the first import block (notebooks: under the first `# %%`). Two traps found
+  while testing: the inlayHint request range is fuzzy at its end (returns hints
+  on the line *after* `end`), so hints are filtered by position; and import
+  edits come as `"from x import Y\n\n\n"` or, once the file has imports,
+  `"\nfrom x import Y"` — match the trimmed text. Hints are requested directly,
+  not read from `vim.lsp.inlay_hint.get()`, whose cache covers only what has
+  been on screen.
 - bazel helper: `~/.local/bin/bazel-compile-commands` is installed by this
   script and references `~/.local/share/bazel-compile-commands-extractor`
   via a Bazel `local_path_override`, so it has no network deps at run time.
