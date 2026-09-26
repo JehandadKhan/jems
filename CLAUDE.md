@@ -430,11 +430,15 @@ the sidebar 33% of the width with Scopes at 55% of it, and caps inline values
 at 60 chars via `display_callback`. Children paging (100 + a `more` node) is
 debugpy's behaviour, not a bug.
 
-### ⚠ Local patch to molten-nvim — read before updating molten
-The cell debugger depends on a **patch to molten's own source**, applied by the
-chezmoi'd `private_molten.lua` (`MOLTEN_PATCHES`, `patch_molten`,
-`unpatch_molten`). Anyone updating molten, pinning a new version, or debugging
-"cell output vanished" must know it exists.
+### ⚠ Local patches to molten-nvim — read before updating molten
+Two **patches to molten's own source** are applied by the chezmoi'd
+`private_molten.lua` (`MOLTEN_PATCHES`, `patch_molten`, `unpatch_molten`): the
+own-execute filter in `runtime.py`, which the cell debugger depends on, and a
+highlight-leak fix in `moltenbuffer.py` (subsection below). Anyone updating
+molten, pinning a new version, or debugging "cell output vanished" / "nvim at
+100% CPU" must know they exist. `MOLTEN_PATCHES` is one entry per file
+(`file`, `mark`, `warn`, `hunks`); each file is patched all-or-nothing and
+independently of the other.
 
 **Why.** molten's `JupyterRuntime.tick()` (`rplugin/python3/molten/runtime.py`)
 feeds every iopub message to the current output with no `parent_header` check,
@@ -470,30 +474,65 @@ upstream.
 - Applied from the spec's `init` on **every nvim startup** (idempotent: skipped
   if the marker is present). `init` runs before molten's python host imports
   the file, so the running host always has it.
-- Reverted (`git checkout -- runtime.py` in the plugin dir) on the
+- Reverted (`git checkout -- runtime.py moltenbuffer.py` in the plugin dir) on the
   `User LazyUpdatePre` / `LazySyncPre` / `LazyRestorePre` events, because
   lazy.nvim updates with a plain, non-forced `git checkout` that a dirty file
   would block. Consequence: right after a `:Lazy update` the *current* session
   may run unpatched molten code if the host restarts; the next startup
   re-patches.
-- All-or-nothing: if either anchor string is missing (upstream edited those
-  lines) it patches nothing and warns at startup: "molten iopub patch no
-  longer applies". Nothing else breaks — only debugging loses cell output.
+- All-or-nothing per file: if any anchor in a file is missing (upstream edited
+  those lines) that file is left alone and a startup warning names it —
+  "molten iopub patch no longer applies" (only debugging loses cell output) or
+  "molten highlight-leak patch no longer applies" (the CPU leak below returns).
+
+#### Highlight-leak patch (`moltenbuffer.py`)
+**Why.** `update_interface()` runs on every cursor move and calls
+`_show_selected()`, which adds one `nvim_buf_add_highlight` per line of the
+current cell to the `molten-highlights` namespace. The old ones are cleared only
+when the cursor moves to a *different* cell. Staying in one cell therefore
+accumulates marks without bound. Found 2026-09-25: a 108-line notebook left open
+~1.5 days held **971,568** marks in that namespace and nvim sat at 99% CPU
+forever (`sample` stack: `update_screen → win_line → decor_redraw_col_impl →
+decor_range_insert → memmove`). Diagnose a live instance via its
+`nvim.<pid>.0` socket with `nvim --server … --remote-expr` counting
+`nvim_buf_get_extmarks` per namespace; `:lua
+vim.api.nvim_buf_clear_namespace(0, vim.api.nvim_get_namespaces()["molten-highlights"], 0, -1)`
+recovers it without losing cells (bounds live in `molten-extmarks`).
+
+**What.** One hunk, marked `# [nvim-config] highlight leak`, after the
+buffer-membership guard in `_show_selected`:
+```diff
+         if buf.number not in [b.number for b in self.buffers]:
+             return
+ 
++        # [nvim-config] highlight leak
++        self.nvim.funcs.nvim_buf_clear_namespace(buf.number, self.highlight_namespace, 0, -1)
++
+         if span.begin.lineno == span.end.lineno:
+```
+Safe because that namespace only ever holds the selected cell's highlight.
+Verified in tmux: a 3-line cell after 200 paced `j`/`k` moves went 27 → 123
+marks unpatched, stayed at 3 patched; highlight still follows the cursor
+across cells. (Moves must be paced — fast typeahead coalesces `CursorMoved`.)
 
 **When molten updates.**
-1. Start nvim; if the warning appears, open the new `runtime.py`, re-find the
-   `run_code` execute call and the `"content" not in message` guard in `tick`,
-   and update the anchors/bodies in `MOLTEN_PATCHES`.
+1. Start nvim; if a warning appears, open the new file it names and re-find the
+   anchors — for `runtime.py` the `run_code` execute call and the
+   `"content" not in message` guard in `tick`; for `moltenbuffer.py` the
+   buffer guard at the top of `_show_selected` — and update `MOLTEN_PATCHES`.
 2. Check upstream first: if molten now filters iopub by parent msg_id itself,
-   delete the patch machinery instead.
-3. Verify: `git -C ~/.local/share/nvim/lazy/molten-nvim diff` shows the two
-   hunks; then in a notebook set a breakpoint, `<leader>mD`, and confirm the
+   or clears the highlight namespace in `_show_selected`, drop that entry.
+3. Verify: `git -C ~/.local/share/nvim/lazy/molten-nvim diff` shows the three
+   hunks across both files; count `molten-highlights` marks stays at the cell's
+   line count while moving inside one cell; then in a notebook set a breakpoint, `<leader>mD`, and confirm the
    cell reads `... Running` while paused and shows its output after
    `<leader>dc`.
 
 **Upstream.** Worth a PR to benlubas/molten-nvim: track the execute msg_id per
 output and ignore foreign iopub messages. That also fixes molten sharing a
 kernel with any other client (e.g. JupyterLab via `:MoltenInit <json>`).
+The highlight leak is a separate one-line PR (clear the namespace in
+`_show_selected`).
 
 ### Why we don't run headless sync from this script
 Earlier triage on macOS: `nvim --headless +Lazy! sync +qa` hung for >2
