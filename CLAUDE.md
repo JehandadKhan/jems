@@ -209,6 +209,13 @@ Don't break these without updating both sides:
 - Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
   (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.
+  chezmoi does manage it: `~/.claude/settings.json` wires `Stop` and
+  `Notification` hooks to `~/.claude/notify.sh`, which rings the bell in the
+  tmux pane that finished (`$TMUX_PANE`) and shows a `display-message`; the
+  chezmoi'd `~/.tmux.conf` sets `window-status-bell-style` so that window's
+  tab turns red. Install-side dependency: tmux ≥ 3.2 for
+  `display-message -d` — already covered by `MIN_TMUX_VERSION` (3.3). Don't
+  drop the floor below 3.2.
 - carbonyl: `install.d/17-carbonyl.sh` installs the upstream
   Chromium-in-the-terminal release (Linux only — no macOS upstream).
   Bundle goes to `~/.local/share/carbonyl/` (a flat dir of binary +
