@@ -92,9 +92,13 @@
 #         expected to disable pyright so the two don't fight if LazyVim's
 #         lang.python extra is later enabled. On re-run, any previously-
 #         installed pyright is removed via 'npm uninstall -g pyright'.
-#     - Claude Code CLI via 'npm i -g @anthropic-ai/claude-code' (provides
-#         the `claude` command). Skipped if INSTALL_CLAUDE=0. Uninstall with
-#         'npm uninstall -g @anthropic-ai/claude-code'.
+#     - Claude Code CLI, native build via Anthropic's claude.ai/install.sh,
+#         run as the user: binary under ~/.local/share/claude/versions/,
+#         launcher symlink ~/.local/bin/claude. User-owned, so the built-in
+#         auto-updater needs no sudo. Any older npm-global
+#         @anthropic-ai/claude-code is uninstalled. Skipped if
+#         INSTALL_CLAUDE=0. Uninstall with
+#         'rm -rf ~/.local/bin/claude ~/.local/share/claude'.
 #     - chezmoi (dotfile manager). Linux: official get.chezmoi.io install
 #         script writes the binary to /usr/local/bin/chezmoi (no apt repo).
 #         macOS: 'brew install chezmoi'. Skipped if INSTALL_CHEZMOI=0.
@@ -207,9 +211,8 @@
 #                         ~/.local/bin/bazel-compile-commands helper.
 #                         Set to 0 if you don't work in any Bazel C++ repos.
 #                         Default ON.
-#   INSTALL_CLAUDE=0    Skip installing the Claude Code CLI
-#                         (@anthropic-ai/claude-code) globally via npm.
-#                         Default ON.
+#   INSTALL_CLAUDE=0    Skip installing the Claude Code CLI (native,
+#                         user-local build under ~/.local). Default ON.
 #   INSTALL_CHEZMOI=0   Skip installing chezmoi. Default ON. Linux: writes
 #                         /usr/local/bin/chezmoi via get.chezmoi.io.
 #                         macOS: 'brew install chezmoi'.
@@ -564,7 +567,7 @@ HELPER_BIN="$USER_HOME/.local/bin/bazel-compile-commands"
 # ---------- run install steps ----------
 # Each step is a separate file in install.d/, sourced (not exec'd) so it
 # sees the helpers and toggles above. Ordering matters in a couple of
-# places (node before claude/basedpyright/bw; nvim before vim/vi symlinks)
+# places (node before basedpyright/bw; nvim before vim/vi symlinks)
 # and is captured by the numeric prefix.
 run_step() {
     local step="$STEPS_DIR/$1"
@@ -611,7 +614,7 @@ else
 fi
 
 if [ "$INSTALL_CLAUDE" = "1" ]; then
-    CLAUDE_STATUS="$(claude --version 2>/dev/null || echo missing)"
+    CLAUDE_STATUS="$(run_as_user "$USER_HOME/.local/bin/claude" --version 2>/dev/null || echo missing)"
 else
     CLAUDE_STATUS="(skipped: INSTALL_CLAUDE=0)"
 fi

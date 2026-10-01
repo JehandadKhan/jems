@@ -54,8 +54,8 @@ launch and fires molten's `:UpdateRemotePlugins` build hook.
 
 Re-run the same command. Re-runs upgrade Python packages in the nvim venv
 (`~/.local/share/nvim-venv`), refresh the bazel-compile-commands extractor
-clone, and re-`npm i -g` the npm-installed CLIs (basedpyright, Claude
-Code). Brew/apt installs are gated on whether the formula/package is
+clone, re-`npm i -g` the npm-installed CLIs (basedpyright), and run
+`claude update`. Brew/apt installs are gated on whether the formula/package is
 already present, so we don't gratuitously upgrade pinned versions.
 
 ## Toggles
@@ -67,7 +67,7 @@ All flags are environment variables.
 | `LINK_VIM`             | `1`     | Alias `vim` and `vi` to `nvim`. Set `0` to skip.                                |
 | `SKIP_NVIM_BUILD`      | `0`     | (Linux only) When `1`, don't rebuild Neovim from source even if the version check would. |
 | `INSTALL_BAZEL_HELPER` | `1`     | When `0`, skip the bazel-compile-commands extractor + `bazel-compile-commands` helper. |
-| `INSTALL_CLAUDE`       | `1`     | When `0`, skip the Claude Code CLI.                                             |
+| `INSTALL_CLAUDE`       | `1`     | When `0`, skip the Claude Code CLI (native, user-local, self-updating).         |
 | `INSTALL_CHEZMOI`      | `1`     | When `0`, skip installing chezmoi.                                              |
 | `INSTALL_GH`           | `1`     | When `0`, skip installing the GitHub CLI (`gh`).                                |
 | `INSTALL_BW`           | `1`     | When `0`, skip installing the Bitwarden CLI (`bw`).                             |
@@ -98,7 +98,9 @@ short version:
   from under you); `~/.local/bin/clangd` symlink to brew's keg-only
   `llvm`. `~/.local/bin` must be on PATH for clangd / jupytext / vim to
   resolve — the chezmoi'd shell rc is expected to put it there.
-- **Both**: `basedpyright` and Claude Code CLI via `npm i -g`; `fzf`
+- **Both**: `basedpyright` via `npm i -g`; Claude Code CLI as the native
+  build (`~/.local/share/claude` + `~/.local/bin/claude`, auto-updates
+  without sudo); `fzf`
   cloned to `~/.fzf` and installed with `--no-update-rc` (chezmoi'd shell
   rc sources `~/.fzf.bash` / `~/.fzf.zsh`); Python venv at
   `~/.local/share/nvim-venv` for molten-nvim; bazel-compile-commands

@@ -206,8 +206,19 @@ Don't break these without updating both sides:
     repo-local alternative is a gitignored `.tf_configure.bazelrc` with
     `common --config=rocm_clang_local` (XLA's `try-import` slot), but the
     `--config` flag keeps the toolchain choice explicit on the command line.
-- Claude Code CLI: installed globally via `npm i -g @anthropic-ai/claude-code`
-  (gated by `INSTALL_CLAUDE`, default 1). The CLI itself stores its config
+- Claude Code CLI: the **native build**, via Anthropic's
+  `curl -fsSL https://claude.ai/install.sh | run_as_user bash` (gated by
+  `INSTALL_CLAUDE`, default 1). Binary under
+  `~/.local/share/claude/versions/<ver>`, launcher symlink
+  `~/.local/bin/claude` — so it relies on the same `~/.local/bin`-on-PATH
+  contract as jupytext. It used to be `npm i -g @anthropic-ai/claude-code`;
+  that was dropped because the npm prefix on Linux is `/usr`, so every
+  update (including Claude's own auto-updater) needed sudo. The native
+  build is user-owned and self-updates. The installer **refuses to run
+  under sudo** (it checks `$SUDO_USER`), hence `run_as_user`. The step
+  uninstalls any leftover npm-global copy, and on re-runs calls
+  `claude update` instead of reinstalling. It never edits shell rc files
+  (it only prints a PATH hint). The CLI itself stores its config
   under `~/.claude/`, which is chezmoi's territory if you want to manage it.
   chezmoi does manage it: `~/.claude/settings.json` wires `Stop` and
   `Notification` hooks to `~/.claude/notify.sh`, which rings the bell in the
@@ -289,8 +300,10 @@ The script is designed to be run repeatedly on the same box:
   comparisons. `brew_ensure FORMULA [MIN_VER]` is the macOS equivalent of
   "install or upgrade to the floor"; passing no MIN keeps the legacy
   install-if-missing behavior for prereqs that don't have a feature floor.
-- `npm i -g` for basedpyright/claude/bw(Linux) is unconditional — npm
-  always installs the latest, so a floor would just be noise.
+- `npm i -g` for basedpyright/bw(Linux) is unconditional — npm
+  always installs the latest, so a floor would just be noise. Claude Code
+  is likewise floor-less: the native build auto-updates, and re-runs call
+  `claude update`.
 - The Python venv at `~/.local/share/nvim-venv` is reused if it exists;
   pip dependencies inside it are upgraded on every run.
 - Symlinks under `~/.local/bin` are re-pointed each run with `ln -sf` so

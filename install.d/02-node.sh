@@ -1,5 +1,5 @@
 # Step 02 — Node.js >= MIN_NODE_VERSION. Several later steps (basedpyright,
-# claude, bw on Linux) shell out to npm, so this runs before them. A pre-
+# bw on Linux, mermaid) shell out to npm, so this runs before them. A pre-
 # existing newer Node (v22, v24, ...) is left alone.
 
 if tool_version_ok node "$MIN_NODE_VERSION" -v; then
