@@ -13,9 +13,10 @@
 #     'apt update' will hit it; key is fetched at install time, not
 #     fingerprint-pinned).
 #   - tflint has no HashiCorp apt repo and the upstream tflint-bundle
-#     deb is unmaintained; install via the official installer script
-#     which drops a binary at /usr/local/bin/tflint (matches the
-#     starship / chezmoi-linux pattern).
+#     deb is unmaintained. Upstream also removed their curl|bash
+#     install_linux.sh (it now 404s), so we fetch the pinned release zip
+#     (TFLINT_VERSION) and drop the binary at /usr/local/bin/tflint
+#     (same zip-to-/usr/local/bin pattern as the tmux/carbonyl steps).
 # macOS:
 #   - terraform and terraform-ls via brew tap hashicorp/tap; tflint is
 #     in core brew.
@@ -50,8 +51,15 @@ if [ "$INSTALL_TERRAFORM" = "1" ]; then
         if command -v tflint >/dev/null 2>&1; then
             echo "==> tflint already installed: $(tflint --version 2>/dev/null | head -1)"
         else
-            echo "==> Installing tflint to /usr/local/bin (official installer)"
-            curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+            echo "==> Installing tflint $TFLINT_VERSION to /usr/local/bin (release zip)"
+            tflint_tmp="$(mktemp -d)"
+            tflint_arch="$(dpkg --print-architecture)"  # amd64 | arm64
+            curl -fsSL --retry 3 -o "$tflint_tmp/tflint.zip" \
+                "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_${tflint_arch}.zip"
+            unzip -o -q "$tflint_tmp/tflint.zip" -d "$tflint_tmp"
+            install -m 0755 "$tflint_tmp/tflint" /usr/local/bin/tflint
+            rm -rf "$tflint_tmp"
+            echo "    tflint installed: $(tflint --version 2>/dev/null | head -1)"
         fi
     else
         if ! brew tap | grep -qx hashicorp/tap; then

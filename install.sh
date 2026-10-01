@@ -308,6 +308,11 @@ TMUX_SOURCE_VERSION="3.5a"
 # publishes a new release.
 NERD_FONT_TAG="v3.4.0"
 
+# Pinned tflint release (step 16, Linux). Upstream removed their
+# curl|bash install_linux.sh, so we fetch the release zip directly. Bump
+# when you want a newer linter; asset names are tflint_linux_<arch>.zip.
+TFLINT_VERSION="0.64.0"
+
 # Mermaid tooling (step 18), all pinned so re-runs are reproducible:
 #   - mermaid-cli (the 'mmdc' npm package) — bump when you want a newer
 #     official renderer.
