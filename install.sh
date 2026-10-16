@@ -429,6 +429,10 @@ else
         echo "Install it first from https://brew.sh and re-run this script." >&2
         exit 1
     fi
+    # Homebrew 7 made "ask mode" the default: every install/upgrade stops
+    # for a [Y/n] confirmation. This script is meant to run unattended, so
+    # opt out for every brew call it (and its subscripts) make.
+    export HOMEBREW_NO_ASK=1
     TARGET_USER="$USER"
     USER_HOME="$HOME"
     BREW_PREFIX="$(brew --prefix)"
