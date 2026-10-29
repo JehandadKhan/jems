@@ -48,7 +48,7 @@
 #         python3-venv / python3-pip / python3-dev, tmux (if INSTALL_TMUX=1)
 #     - NodeSource apt repo + key (installed via 'curl | bash' from
 #         deb.nodesource.com — a remote script piped to root bash)
-#     - Node.js 20 from NodeSource (only if no Node >=20 is present)
+#     - Node.js 24 from NodeSource (only if no Node >=24 is present)
 #     - Neovim (stable) built from source -> /usr/local/bin/nvim
 #     - apt.llvm.org as a persistent apt source for clangd-18 (every future
 #         'apt update' will hit it; the GPG key is NOT fingerprint-pinned —
@@ -332,7 +332,7 @@ MIN_CARGO_VERSION="1.85.0"
 # copies win. Below these floors the step force-reinstalls/upgrades rather
 # than skipping. Bump these when chezmoi-side configs start relying on a
 # newer feature, or when an upstream release fixes something we hit.
-MIN_NODE_VERSION="20.0.0"
+MIN_NODE_VERSION="24.0.0"
 MIN_CLANGD_VERSION="18.0.0"
 MIN_FZF_VERSION="0.48.0"
 MIN_CHEZMOI_VERSION="2.50.0"

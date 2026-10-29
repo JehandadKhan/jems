@@ -11,7 +11,7 @@ Neovim + LazyVim + Jupyter notebook stack on **Ubuntu 22.04 / WSL2** or
   ipykernel, jupytext; ImageMagick; `~/.local/bin/jupytext` symlink
 - **Bazel → clangd**: a `bazel-compile-commands` helper that produces
   `compile_commands.json` for any Bazel workspace (XLA, JAX/jaxlib, TF, …)
-- **fzf**, ripgrep, Node.js 20, the **Claude Code** CLI
+- **fzf**, ripgrep, Node.js 24, the **Claude Code** CLI
 - **Shell prompt + multiplexer**: `starship` (cross-shell prompt) and
   `tmux` with clipboard helpers (`xclip` + `wl-clipboard` on Linux; pbcopy
   is built into macOS)
@@ -91,7 +91,7 @@ Full list in the comment block at the top of `install.sh`. The
 short version:
 
 - **Linux**: apt sources for `apt.llvm.org` (clangd-18) and
-  `deb.nodesource.com` (Node 20), keys in `/etc/apt/keyrings/`; Neovim
+  `deb.nodesource.com` (Node 24), keys in `/etc/apt/keyrings/`; Neovim
   built into `/usr/local/bin/nvim`; update-alternatives entries for
   `/usr/bin/clangd` (and `/usr/bin/{vim,vi}` if `LINK_VIM=1`).
 - **macOS**: brew formulae installed only if missing (never upgraded out
