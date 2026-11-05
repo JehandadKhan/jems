@@ -18,8 +18,10 @@
 #     (TFLINT_VERSION) and drop the binary at /usr/local/bin/tflint
 #     (same zip-to-/usr/local/bin pattern as the tmux/carbonyl steps).
 # macOS:
-#   - terraform and terraform-ls via brew tap hashicorp/tap; tflint is
-#     in core brew.
+#   - terraform and terraform-ls via brew tap hashicorp/tap. tflint is
+#     no longer in homebrew-core (formulae.brew.sh returns 404 for it),
+#     so it uses the same pinned release zip as Linux, dropped at
+#     ~/.local/bin/tflint (user-local, same PATH contract as jupytext).
 
 if [ "$INSTALL_TERRAFORM" = "1" ]; then
     if [ "$OS" = "linux" ]; then
@@ -68,7 +70,25 @@ if [ "$INSTALL_TERRAFORM" = "1" ]; then
         fi
         brew_ensure hashicorp/tap/terraform
         brew_ensure hashicorp/tap/terraform-ls
-        brew_ensure tflint
+
+        tflint_bin="$USER_HOME/.local/bin/tflint"
+        if [ -x "$tflint_bin" ] || command -v tflint >/dev/null 2>&1; then
+            echo "==> tflint already installed: $("$tflint_bin" --version 2>/dev/null || tflint --version 2>/dev/null | head -1)"
+        else
+            echo "==> Installing tflint $TFLINT_VERSION to $tflint_bin (release zip)"
+            tflint_tmp="$(mktemp -d)"
+            case "$(uname -m)" in
+                arm64|aarch64) tflint_arch=arm64 ;;
+                *)             tflint_arch=amd64 ;;
+            esac
+            curl -fsSL --retry 3 -o "$tflint_tmp/tflint.zip" \
+                "https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_darwin_${tflint_arch}.zip"
+            unzip -o -q "$tflint_tmp/tflint.zip" -d "$tflint_tmp"
+            run_as_user mkdir -p "$USER_HOME/.local/bin"
+            run_as_user install -m 0755 "$tflint_tmp/tflint" "$tflint_bin"
+            rm -rf "$tflint_tmp"
+            echo "    tflint installed: $("$tflint_bin" --version 2>/dev/null | head -1)"
+        fi
     fi
 else
     echo "==> INSTALL_TERRAFORM=0; skipping terraform + terraform-ls + tflint install"

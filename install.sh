@@ -43,7 +43,7 @@
 # Persistent system changes this script makes (read before running):
 #
 #   Linux (Ubuntu/Debian, requires sudo):
-#     - apt packages: build deps, ripgrep, gnupg helpers, imagemagick,
+#     - apt packages: build deps, ripgrep, fd-find, gnupg helpers, imagemagick,
 #         poppler-utils (pdftotext/pdfinfo/pdftoppm, for PDF-in-nvim),
 #         python3-venv / python3-pip / python3-dev, tmux (if INSTALL_TMUX=1)
 #     - NodeSource apt repo + key (installed via 'curl | bash' from
@@ -59,20 +59,21 @@
 #     - apt.releases.hashicorp.com as a persistent apt source for
 #         `terraform` and `terraform-ls` (same caveat: every future
 #         'apt update' will hit it; key not fingerprint-pinned). `tflint`
-#         is installed via the terraform-linters install_linux.sh script
+#         is installed from the pinned GitHub release zip (TFLINT_VERSION)
 #         to /usr/local/bin (no apt repo). All three skipped if
 #         INSTALL_TERRAFORM=0.
 #     - chezmoi binary at /usr/local/bin/chezmoi via get.chezmoi.io
 #         (no apt repo). Skipped if INSTALL_CHEZMOI=0.
+#     - Symlink ~/.local/bin/fd -> /usr/bin/fdfind (apt names the binary fdfind)
 #     - update-alternatives entries for /usr/bin/clangd (and optionally
 #         /usr/bin/{vim,vi} when LINK_VIM=1) — affects all users on the box
 #
 #   macOS (Homebrew, runs as your user):
-#     - brew formulae installed if missing: neovim, node, ripgrep, ninja,
+#     - brew formulae installed if missing: neovim, node, ripgrep, fd, ninja,
 #         cmake, gettext, imagemagick, poppler (for PDF-in-nvim), llvm
 #         (for clangd), chezmoi, gh,
-#         tmux, starship, hashicorp/tap/terraform, hashicorp/tap/terraform-ls,
-#         tflint. Existing versions are left alone (the script does not
+#         tmux, starship, hashicorp/tap/terraform, hashicorp/tap/terraform-ls.
+#         Existing versions are left alone (the script does not
 #         'brew upgrade'). chezmoi/gh/tmux/starship and the terraform
 #         trio are gated on their respective INSTALL_* flags. terraform
 #         and terraform-ls require the hashicorp/tap brew tap (added
@@ -146,11 +147,12 @@
 #         JetBrainsMono Nerd Font variant.
 #     - terraform (HashiCorp's Terraform CLI) + terraform-ls (LSP) +
 #         tflint (linter). Linux: terraform and terraform-ls from
-#         apt.releases.hashicorp.com (persistent apt source); tflint via
-#         the official install_linux.sh installer to /usr/local/bin.
+#         apt.releases.hashicorp.com (persistent apt source); tflint from
+#         the pinned GitHub release zip to /usr/local/bin.
 #         macOS: 'brew install hashicorp/tap/terraform
-#         hashicorp/tap/terraform-ls tflint' (the tap is added
-#         automatically). The chezmoi'd nvim config enables LazyVim's
+#         hashicorp/tap/terraform-ls' (the tap is added automatically);
+#         tflint from the same release zip to ~/.local/bin/tflint, since
+#         homebrew-core no longer carries it. The chezmoi'd nvim config enables LazyVim's
 #         lang.terraform extra and uses private_terraform.lua to disable
 #         Mason for terraformls so this script's binaries are what nvim
 #         picks up (mirrors the clangd pattern). Skipped if
@@ -180,7 +182,9 @@
 #     - fzf cloned to ~/.fzf and its install script run with
 #         --no-update-rc (so no rc files are touched). Your chezmoi'd
 #         bashrc/zshrc is expected to source ~/.fzf.bash / ~/.fzf.zsh.
-#     - Python venv at ~/.local/share/nvim-venv with pynvim + jupyter deps.
+#     - Python venv at ~/.local/share/nvim-venv with pynvim + jupyter deps,
+#         built on a python >= MIN_PYTHON_VERSION (rebuilt from scratch on
+#         re-run if the existing venv's interpreter is older or gone).
 #         Your chezmoi'd nvim config should set
 #         vim.g.python3_host_prog = "$HOME/.local/share/nvim-venv/bin/python"
 #         so molten-nvim can find pynvim.
@@ -250,10 +254,11 @@
 #   INSTALL_TERRAFORM=0 Skip installing terraform CLI + terraform-ls + tflint.
 #                         Default ON. Linux: terraform and terraform-ls from
 #                         apt.releases.hashicorp.com (adds it as a persistent
-#                         apt source); tflint from the terraform-linters
-#                         official installer to /usr/local/bin. macOS:
+#                         apt source); tflint from the pinned GitHub
+#                         release zip to /usr/local/bin. macOS:
 #                         brew install hashicorp/tap/terraform +
-#                         hashicorp/tap/terraform-ls + tflint. The CLI is
+#                         hashicorp/tap/terraform-ls; tflint from the same
+#                         release zip to ~/.local/bin/tflint. The CLI is
 #                         what `terraform init/plan/apply` uses; terraform-ls
 #                         backs LazyVim's lang.terraform extra (enabled in
 #                         the chezmoi'd lazyvim.json).
@@ -313,9 +318,10 @@ TMUX_SOURCE_VERSION="3.5a"
 # publishes a new release.
 NERD_FONT_TAG="v3.4.0"
 
-# Pinned tflint release (step 16, Linux). Upstream removed their
-# curl|bash install_linux.sh, so we fetch the release zip directly. Bump
-# when you want a newer linter; asset names are tflint_linux_<arch>.zip.
+# Pinned tflint release (step 16, both OSes). Upstream removed their
+# curl|bash install_linux.sh and homebrew-core dropped the formula, so we
+# fetch the release zip directly. Bump when you want a newer linter; asset
+# names are tflint_{linux,darwin}_<arch>.zip.
 TFLINT_VERSION="0.64.0"
 
 # Mermaid tooling (step 18), all pinned so re-runs are reproducible:
@@ -341,6 +347,14 @@ MIN_CHEZMOI_VERSION="2.50.0"
 MIN_GH_VERSION="2.40.0"
 MIN_BW_VERSION="2024.1.0"
 MIN_STARSHIP_VERSION="1.18.0"
+
+# Minimum Python for the nvim venv (step 15). molten-nvim's rplugin uses
+# `match` statements (3.10+); on an older interpreter pynvim fails to
+# import it with a SyntaxError, `:UpdateRemotePlugins` writes an empty
+# python3 section into rplugin.vim, and `:MoltenInit` is never defined.
+# macOS's Xcode CLT `python3` is 3.9, so a bare `python3` is not enough
+# there — see find_python. A venv built below this floor is rebuilt.
+MIN_PYTHON_VERSION="3.10"
 
 # ---------- locate subscripts ----------
 # resolve symlinks so install.d/ is found even when the script is invoked
@@ -504,6 +518,21 @@ tool_version_ok() {
     version_ge "$cur" "$min"
 }
 
+# Print the path of a python3 on PATH that satisfies MIN_PYTHON_VERSION,
+# or return 1. Versioned names are tried first (newest first) because on
+# macOS the bare `python3` is usually Xcode CLT's 3.9 while brew's
+# python@3.x only reliably links `python3.x`.
+find_python() {
+    local cand
+    for cand in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
+        if tool_version_ok "$cand" "$MIN_PYTHON_VERSION"; then
+            command -v "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # brew_ensure FORMULA [MIN_VER] — install a brew formula if missing,
 # `brew upgrade` it if the installed version is below MIN_VER, otherwise
 # leave it alone. Replaces the old brew_install_if_missing helper, which
@@ -660,7 +689,7 @@ fi
 if [ "$INSTALL_TERRAFORM" = "1" ]; then
     TERRAFORM_STATUS="$(terraform --version 2>/dev/null | head -1 || echo missing)"
     TERRAFORM_LS_STATUS="$(terraform-ls --version 2>/dev/null | head -1 || echo missing)"
-    TFLINT_STATUS="$(tflint --version 2>/dev/null | head -1 || echo missing)"
+    TFLINT_STATUS="$("$USER_HOME/.local/bin/tflint" --version 2>/dev/null | head -1 || tflint --version 2>/dev/null | head -1 || echo missing)"
 else
     TERRAFORM_STATUS="(skipped: INSTALL_TERRAFORM=0)"
     TERRAFORM_LS_STATUS="(skipped: INSTALL_TERRAFORM=0)"
@@ -740,11 +769,16 @@ if [ "$OS" = "linux" ]; then
         echo "    /etc/apt/sources.list.d/hashicorp.list"
         echo "    /etc/apt/keyrings/hashicorp.gpg"
     fi
+    echo "User-local symlinks (delete to undo):"
+    echo "    ~/.local/bin/fd          -> $(command -v fdfind || echo /usr/bin/fdfind)"
 else
-    echo "Brew formulae installed/used: neovim node ripgrep ninja cmake gettext imagemagick poppler llvm chezmoi gh bitwarden-cli tmux starship hashicorp/tap/terraform hashicorp/tap/terraform-ls tflint"
+    echo "Brew formulae installed/used: neovim node ripgrep fd ninja cmake gettext imagemagick poppler python@3.13 llvm chezmoi gh bitwarden-cli tmux starship hashicorp/tap/terraform hashicorp/tap/terraform-ls"
     echo "User-local symlinks (delete to undo):"
     echo "    ~/.local/bin/clangd      -> $(brew --prefix llvm)/bin/clangd"
     echo "    ~/.local/bin/jupytext    -> $NVIM_VENV/bin/jupytext"
+    if [ "$INSTALL_TERRAFORM" = "1" ]; then
+        echo "    ~/.local/bin/tflint      (release binary, not a symlink)"
+    fi
     if [ "$LINK_VIM" = "1" ]; then
         echo "    ~/.local/bin/{vim,vi}    -> $(command -v nvim)"
     fi
@@ -764,6 +798,10 @@ echo "  2. Open a new shell so PATH and fzf hooks load."
 echo "  3. Run 'nvim' once to let lazy.nvim bootstrap plugins. After that,"
 echo "     'nvim path/to/notebook.ipynb' opens via jupytext as a hydrogen-"
 echo "     style buffer; <leader>mi starts a kernel, <leader>ml evaluates."
+if [ "${NVIM_VENV_REBUILT:-0}" = "1" ]; then
+echo "     The nvim venv was rebuilt this run, so run ':UpdateRemotePlugins'"
+echo "     inside nvim (then restart it) to re-register molten's commands."
+fi
 echo "  4. Image rendering needs a graphics-capable terminal (kitty,"
 echo "     wezterm, ghostty; on macOS iTerm2 also works). In other"
 echo "     terminals molten text output still works; plots just don't render."

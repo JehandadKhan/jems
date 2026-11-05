@@ -1,39 +1,9 @@
 # jems — repo notes for Claude
 
-This repo is a Bash installer that sets up the **prerequisites** for a
-Neovim + LazyVim + Jupyter notebook stack on a fresh Ubuntu/WSL2 box or a
-fresh macOS (14+, Apple Silicon or Intel) box. "Prerequisites" means
-anything that is not a dotfile: apt/brew packages, the nvim binary,
-Node.js, clangd, basedpyright, the Claude Code CLI, fzf binaries, the
-Python venv that molten-nvim depends on, the
-hedronvision/bazel-compile-commands-extractor clone + helper, and a couple
-of environment-specific symlinks under `~/.local/bin`. Linux uses apt + a
-from-source nvim build and runs under `sudo`; macOS uses Homebrew and runs
-as the user (brew refuses sudo). The OS is detected via `uname -s` at the
-top and platform-specific blocks branch on `$OS` (`linux` | `macos`).
-
-## Layout
-- `install.sh` is the **driver**: env-var toggles, OS detect, preflight,
-  `run_as_user`, helpers (`brew_install_if_missing`, `nvim_version_ok`,
-  `nerd_font_cask`), shared path constants (`NVIM_VENV`, `HEDRON_DIR`,
-  `HELPER_BIN`), the final summary, and the comment block enumerating every
-  persistent system change. Anything reused by more than one step belongs
-  here, not in a subscript.
-- `install.d/NN-<step>.sh` — one file per install step (system prereqs,
-  node, nvim, fzf, clangd, bazel helper, basedpyright, claude, chezmoi, gh,
-  bw, tmux, starship, nerd-font, nvim-venv, terraform, carbonyl, mermaid,
-  and the interactive bootstrap
-  prompts at `99-`). Subscripts are **sourced**, not exec'd, so they
-  inherit the driver's variables and helpers. Numeric prefix is also the
-  run order — node before anything that shells out to npm, nvim before the
-  vim/vi symlinks, etc.
-- `install.d/files/bazel-compile-commands` — the runtime helper installed
-  to `~/.local/bin/bazel-compile-commands`. Edited as a real script (not a
-  heredoc) so syntax highlighting and shellcheck work; the bazel-helper
-  step `install -m 0755`'s it into place.
-- Hard rule: **at most two levels of scripts** (`install.sh` →
-  `install.d/*.sh`). Subscripts must not source other subscripts. If a
-  helper is reused, lift it into `install.sh`.
+Bash installer for the **prerequisites** (not dotfiles) of a Neovim + LazyVim +
+Jupyter stack on Ubuntu/WSL2 (apt, runs under `sudo`) and macOS 14+ (brew, runs
+as the user). What each step does is in the `install.sh` header and the
+per-step headers in `install.d/`; this file holds what the code can't tell you.
 
 ## Out of scope: dotfiles
 
@@ -63,10 +33,19 @@ Don't break these without updating both sides:
   jupyter_client, ipykernel, jupytext, etc. The chezmoi'd nvim config is
   expected to set
   `vim.g.python3_host_prog = "$HOME/.local/share/nvim-venv/bin/python"`
-  so molten-nvim can find pynvim.
-- `~/.local/bin/{clangd,jupytext,vim,vi}` — the script symlinks these
+  so molten-nvim can find pynvim. The venv must be built on a python >=
+  `MIN_PYTHON_VERSION` (3.10): molten's rplugin uses `match`, so on an
+  older interpreter pynvim fails to import it, `:UpdateRemotePlugins`
+  writes an empty python3 section into `~/.local/share/nvim/rplugin.vim`,
+  and `:MoltenInit` is simply undefined (no error at startup). The
+  installer picks the interpreter via `find_python` and rebuilds a venv
+  that's below the floor; after a rebuild the user must run
+  `:UpdateRemotePlugins` once in nvim. Don't go back to a bare `python3`
+  here — on macOS that's Xcode CLT's 3.9.
+- `~/.local/bin/{clangd,jupytext,vim,vi,fd}` — the script symlinks these
   (clangd from brew's keg-only llvm; jupytext from the nvim venv; vim/vi
-  from nvim when `LINK_VIM=1`). The chezmoi'd shell rc is expected to
+  from nvim when `LINK_VIM=1`; fd -> apt's `fdfind` on Linux only, since
+  LazyVim's pickers look for the `fd` name; brew's `fd` needs no link). The chezmoi'd shell rc is expected to
   prepend `~/.local/bin` to PATH (macOS doesn't do this by default the
   way Ubuntu's `~/.profile` does).
 - `~/.fzf/` — the script clones fzf and runs its installer with
@@ -99,53 +78,8 @@ Don't break these without updating both sides:
   interactive sessions and rewrites those panes' saved command to
   `claude --resume <id>`; `@resurrect-processes '"~claude --resume"'`
   makes restore re-run it.
-- new-notebook creation: `jupytext --to ipynb` writes **no `kernelspec`**
-  into notebook metadata, and jupytext.nvim's `get_ipynb_metadata`
-  (`lua/jupytext/utils.lua:16-17`) indexes both the `io.open` result and
-  `metadata.kernelspec.language` unconditionally. So a missing *or*
-  kernelspec-less `.ipynb` throws in jupytext's `BufReadCmd` and opens as an
-  empty buffer. The chezmoi'd `private_jupytext.lua` fixes both halves:
-  - `init()` seeds any nonexistent `.ipynb` before it is read, via
-    `jupytext --to ipynb --set-kernel`. Contents come from `SEED_LINES` at
-    the top of the spec: a `# %% [markdown]` cheatsheet cell (cell syntax +
-    the main molten keymaps) plus an empty `# %%` code cell. Keep that list
-    in sync with the molten keymaps in `private_molten.lua` — it is the
-    first thing a user reads in a new notebook. The `·` separators are
-    written as `\194\183` byte escapes to keep the file plain ASCII.
-    The seeding **must** be
-    in `init`, not `config`: lazy.nvim runs `config` after the command-line
-    buffer is already being read, so `nvim new.ipynb` would still emit the
-    traceback and only recover afterwards. It sweeps `vim.fn.argv()` for
-    the `nvim new.ipynb` case and registers `BufAdd` for `:edit new.ipynb`.
-    `BufNewFile` does **not** work — jupytext registers `BufReadCmd`, which
-    Neovim fires even for a nonexistent file (a `*Cmd` event takes over the
-    read), so `BufNewFile` never runs.
-  - `config()` adds `:NotebookNew <path> [kernel]` (same seeding, but with a
-    kernel picker, extension/parent-dir handling, and an existing-file
-    guard) and `:NotebookKernels`.
-  - The same `BufReadCmd` takeover also stops the **LSP** from ever loading in
-    a notebook. LazyVim lazy-loads `nvim-lspconfig` on `BufReadPre`; because
-    jupytext's `*Cmd` handler takes over the read, `BufReadPre` never fires for
-    `*.ipynb`, lspconfig is never loaded, no client attaches, and nvim-cmp
-    silently degrades to buffer-word completion (the symptom is "autocomplete
-    only offers words already in the file"). `init()` works around it by
-    force-loading lspconfig and re-firing `FileType` on the converted buffer.
-    Both halves are needed: loading lspconfig alone is too late (its own
-    `FileType` hook already missed the buffer) and re-firing `FileType` alone
-    does nothing while lspconfig is unloaded. It also needs **two** entry
-    points — `BufReadPost`/`BufAdd` for `:edit foo.ipynb`, and `VimEnter` +
-    a `vim.fn.argv()` sweep for `nvim foo.ipynb`, since a file named on the
-    command line is read before any lazy-loaded plugin can register an
-    autocmd. Testing only the `:edit` path will look like success while the
-    command-line path stays broken; verify with
-    `nvim foo.ipynb` then `:lua =#vim.lsp.get_clients({bufnr=0})`.
-  Both shell out to `~/.local/share/nvim-venv/bin/{jupyter,jupytext}` before
-  falling back to PATH, because the venv is what `vim.g.python3_host_prog`
-  points at and therefore the kernelspec search path molten resolves against
-  — a brew or project-env `jupyter` reports a different set. The kernel
-  argument is a kernelspec **directory name**, matching what `:MoltenInit`
-  takes; molten's own picker lists `find_kernel_specs().keys()` and never
-  shows `display_name`, which is why `:NotebookKernels` prints both columns.
+- new-notebook creation and the notebook LSP workaround (jupytext's `BufReadCmd`
+  takeover): `.claude/skills/nvim-notebook/SKILL.md`.
 - basedpyright vs pyright: this script installs `basedpyright` globally via
   npm (and uninstalls any old `pyright` it finds). The chezmoi'd
   `lua/plugins/lspconfig.lua` is expected to disable `pyright` in its
@@ -158,111 +92,29 @@ Don't break these without updating both sides:
   LazyVim's default pyright config resolves to a binary that runs — you just
   get basedpyright's engine under pyright's defaults instead of the fork's
   stricter ones. `:LspInfo` naming `pyright` is the tell.
-  The same spec adds `<leader>ct`/`<leader>cT` (basedpyright server `keys`):
-  apply basedpyright's type inlay hints as annotations. basedpyright attaches
-  LSP `textEdits` to type hints (VS Code's double-click-to-insert); raw, each
-  hint also carries its own import edit aimed at line 0, so they are filtered
-  (type hints only, bare `Any` skipped), imports deduped/merged and moved after
-  the first import block (notebooks: under the first `# %%`). Two traps found
-  while testing: the inlayHint request range is fuzzy at its end (returns hints
-  on the line *after* `end`), so hints are filtered by position; and import
-  edits come as `"from x import Y\n\n\n"` or, once the file has imports,
-  `"\nfrom x import Y"` — match the trimmed text. Hints are requested directly,
-  not read from `vim.lsp.inlay_hint.get()`, whose cache covers only what has
-  been on screen.
+  The same spec's `<leader>ct`/`<leader>cT` inlay-hint keys have their own
+  traps — see the `nvim-notebook` skill.
 - bazel helper: `~/.local/bin/bazel-compile-commands` is installed by this
-  script and references `~/.local/share/bazel-compile-commands-extractor`
-  via a Bazel `local_path_override`, so it has no network deps at run time.
-  It writes a fenced managed block into the Bazel workspace's
-  `MODULE.bazel`/`WORKSPACE`, plus `tools/clangd/BUILD.bazel`. None of
-  those paths are dotfiles, so they belong here, not in chezmoi. The
-  install script also patches the local hedron clone's
-  `refresh_compile_commands.bzl` to load `py_binary` from `@rules_python`
-  rather than calling `native.py_binary`. Without this, WORKSPACE-mode
-  workspaces (notably XLA, which pins `common --noenable_bzlmod`) route
-  hedron's macro to Bazel's built-in py_binary, which can't substitute
-  rules_python's bash bootstrap placeholders (`%interpreter_args%` etc.)
-  and the launcher dies trying to exec a literal `%interpreter_args%`
-  path. See hedron issue #168. The patch is idempotent and re-applied
-  on every `install.sh` run, so a `git pull` of hedron that reverts it
-  gets re-fixed.
-  - Host↔container gotcha (not install-side, but bites the bazel-compile-commands
-    workflow): when running the extractor inside a `docker run -u $(id -u):$(id -g)`
-    container (the chezmoi'd `drun` alias), the container must (a) bind-mount
-    `/etc/passwd` + `/etc/group` read-only and/or set `-e USER="$USER"` so Bazel
-    resolves the same `~/.cache/bazel/_bazel_$USER` output base as the host —
-    otherwise `$USER` is empty inside, Bazel picks a fresh output base, and every
-    external repo (notably the multi-GB LLVM toolchain) re-downloads from cold.
-    (b) `--group-add` the GPU device GIDs *numerically* — `/dev/kfd` and
-    `/dev/dri/renderD*` are group `render` (GID 109 on this host, but `render` is
-    a dynamic ≥100 allocation and can differ per machine), `/dev/dri/card*` is
-    `video` (GID 44, a Debian static alloc). Name-based `--group-add video`
-    resolves against the image's `/etc/group`, misses `render`, and breaks
-    `rocminfo`. The robust form derives them at runtime:
-    `--group-add "$(stat -c %g /dev/kfd)" --group-add "$(stat -c %g /dev/dri/renderD128)"`.
-    All of this lives in the chezmoi'd `~/.bashrc` (`private_dot_bashrc`), not
-    here — this note is just a pointer for the next "clangd can't find headers /
-    rocminfo fails in the container" triage.
-  - `--config` passthrough: the helper takes `--config NAME` (repeatable; or the
-    `BAZEL_CONFIG` env var) and applies it both to its `bazel run` and — past a
-    `--` — to hedron's internal `bazel aquery` (refresh.template.py does
-    `additional_flags = shlex.split(flags) + sys.argv[1:]`). This exists because
-    the helper otherwise runs *bare* `bazel run`, which on repos that need a
-    named toolchain config falls back to Bazel's auto-detected `local` toolchain.
-    On an Ubuntu host that toolchain assumes GCC and injects
-    `-fno-canonical-system-headers`; with a clang compiler (e.g. XLA's
-    `/usr/lib/llvm-18/bin/clang`) clang rejects that flag and hedron's
-    `print_args.cpp` fails to compile before extraction even starts. Fix: pass
-    the repo's build config — for XLA on ROCm,
-    `bazel-compile-commands --config rocm_clang_local <root> //xla/...`
-    (`rocm_clang_local` = `rocm_base` + `clang_local` + the ROCm crosstool, and
-    pins `CLANG_COMPILER_PATH=/usr/lib/llvm-18/bin/clang` — which only exists
-    inside the ROCm container, so run the extractor there). The equivalent
-    repo-local alternative is a gitignored `.tf_configure.bazelrc` with
-    `common --config=rocm_clang_local` (XLA's `try-import` slot), but the
-    `--config` flag keeps the toolchain choice explicit on the command line.
-- Claude Code CLI: the **native build**, via Anthropic's
-  `curl -fsSL https://claude.ai/install.sh | run_as_user bash` (gated by
-  `INSTALL_CLAUDE`, default 1). Binary under
-  `~/.local/share/claude/versions/<ver>`, launcher symlink
-  `~/.local/bin/claude` — so it relies on the same `~/.local/bin`-on-PATH
-  contract as jupytext. It used to be `npm i -g @anthropic-ai/claude-code`;
-  that was dropped because the npm prefix on Linux is `/usr`, so every
-  update (including Claude's own auto-updater) needed sudo. The native
-  build is user-owned and self-updates. The installer **refuses to run
-  under sudo** (it checks `$SUDO_USER`), hence `run_as_user`. The step
-  uninstalls any leftover npm-global copy, and on re-runs calls
-  `claude update` instead of reinstalling. It never edits shell rc files
-  (it only prints a PATH hint). The CLI itself stores its config
-  under `~/.claude/`, which is chezmoi's territory if you want to manage it.
-  chezmoi does manage it: `~/.claude/settings.json` wires `Stop` and
+  script (what it writes and the hedron `py_binary` patch are explained in
+  `install.d/06-bazel-helper.sh` and `install.d/files/bazel-compile-commands`).
+  None of the paths it writes are dotfiles, so they belong here, not in
+  chezmoi. Container `$USER`/GID gotchas, the ROCm `--config` note and
+  clangd-on-macOS triage: `.claude/skills/bazel-clangd-triage/SKILL.md`.
+- Claude Code CLI: native build under `~/.local/share/claude/versions/<ver>`,
+  launcher `~/.local/bin/claude` — same `~/.local/bin`-on-PATH contract as
+  jupytext (install details in `install.d/08-claude.sh`). Config under `~/.claude/`.
+  chezmoi manages that dir: `~/.claude/settings.json` wires `Stop` and
   `Notification` hooks to `~/.claude/notify.sh`, which rings the bell in the
   tmux pane that finished (`$TMUX_PANE`) and shows a `display-message`; the
   chezmoi'd `~/.tmux.conf` sets `window-status-bell-style` so that window's
   tab turns red. Install-side dependency: tmux ≥ 3.2 for
   `display-message -d` — already covered by `MIN_TMUX_VERSION` (3.3). Don't
   drop the floor below 3.2.
-- carbonyl: `install.d/17-carbonyl.sh` installs the upstream
-  Chromium-in-the-terminal release (Linux only — no macOS upstream).
-  Bundle goes to `~/.local/share/carbonyl/` (a flat dir of binary +
-  shared libs, ~150 MB extracted) with `~/.local/bin/carbonyl` as a
-  symlink — same user-local-binary pattern as jupytext and the
-  bazel helper. Idempotency via `$CARBONYL_DIR/.installed_version`;
-  bump `CARBONYL_VERSION` in the step when upstream cuts a new
-  release (currently pinned at 0.0.3, the only release available).
-  Gated by `INSTALL_CARBONYL` (default 1). The chezmoi'd bashrc and
-  zshrc define `alias carbonyl='carbonyl --user-data-dir=…'` pointing
-  at `~/.local/share/carbonyl-profile` so cookies / logins / history
-  survive restarts (carbonyl uses an ephemeral Chromium profile by
-  default). No vim keybindings inside carbonyl; for vim-style movement
-  use `w3m` instead.
-- Terraform stack: `install.d/16-terraform.sh` installs the `terraform`
-  CLI, `terraform-ls` LSP, and `tflint` linter. Linux pulls `terraform`
-  and `terraform-ls` from `apt.releases.hashicorp.com` (persistent apt
-  source) and `tflint` via terraform-linters' official installer to
-  `/usr/local/bin`. macOS uses `brew install hashicorp/tap/terraform
-  hashicorp/tap/terraform-ls tflint`. Gated by `INSTALL_TERRAFORM`
-  (default 1). The chezmoi'd `lazyvim.json` enables
+- Terraform: `install.d/16-terraform.sh` installs `terraform`, `terraform-ls`
+  and `tflint` (gated by `INSTALL_TERRAFORM`). `tflint` comes from the pinned
+  GitHub release zip on both OSes (`/usr/local/bin` on Linux, `~/.local/bin`
+  on macOS) — homebrew-core dropped the formula, so `brew_ensure tflint`
+  aborts the whole run with "No available formula". The chezmoi'd `lazyvim.json` enables
   `lazyvim.plugins.extras.lang.terraform` and `private_terraform.lua`
   (a) disables Mason for `terraformls` so this script's binary wins,
   (b) strips `tflint` from Mason's `ensure_installed`, (c) strips
@@ -276,29 +128,18 @@ Don't break these without updating both sides:
   ships cargo 1.75. Rather than fight that, we let `vim-terraform`
   handle highlighting (pure vimscript, no compile) and skip the
   treesitter parser for hcl/terraform entirely.
-- Mermaid tooling: `install.d/18-mermaid.sh` installs two renderers, gated
-  by `INSTALL_MERMAID` (default 1). **mermaid-cli** (`mmdc`) goes in via
-  `npm i -g @mermaid-js/mermaid-cli@$MERMAID_CLI_VERSION` (pinned; bundles a
-  puppeteer/headless-Chromium SVG/PNG/PDF renderer). **mmdflux**
-  (kevinswiber/mmdflux — Mermaid → terminal text / SVG / structured JSON,
-  no browser) is built from crates.io via `cargo install mmdflux --version
-  $MMDFLUX_VERSION --locked`, landing in `~/.cargo/bin/mmdflux`. Both
-  versions are pinned in `install.sh` alongside the other pinned tags; bump
-  them there. cargo isn't provided by any other step, so this step
-  bootstraps a **user-local rustup toolchain** (into `~/.rustup` + `~/.cargo`,
-  `--profile minimal --no-modify-path`, pinned to `$RUST_TOOLCHAIN`) when no
-  cargo `>= $MIN_CARGO_VERSION` is found — note jammy's apt cargo (1.75) is
-  below that floor, so on Ubuntu 22.04 rustup is what supplies the toolchain.
-  The chezmoi'd shell rc is expected to put `~/.cargo/bin` on PATH (same
-  contract as `~/.local/bin`) so `mmdflux` resolves. Idempotency: mmdc is
-  reinstalled unconditionally (npm, cheap); mmdflux is skipped when `cargo
-  install --list` already shows the pinned version.
+- `~/.cargo/bin` on PATH: the mermaid step (`install.d/18-mermaid.sh`) installs
+  `mmdflux` via a user-local rustup/cargo toolchain, so the chezmoi'd shell rc
+  is expected to prepend `~/.cargo/bin` — same contract as `~/.local/bin`.
 
 ## Single source of truth
 Everything install-side lives under `install.sh` + `install.d/`. There is
 no Ansible, no Makefile, no nested install directories. The two-level
 limit (driver → step) is intentional; if you find yourself wanting a
 third level, lift the shared code into `install.sh` instead.
+Hard rule: at most two levels of scripts (`install.sh` → `install.d/*.sh`).
+Subscripts are sourced by the driver and must not source other subscripts;
+anything reused by more than one step belongs in `install.sh`.
 
 ## Re-run contract
 The script is designed to be run repeatedly on the same box:
@@ -319,13 +160,8 @@ The script is designed to be run repeatedly on the same box:
   always installs the latest, so a floor would just be noise. Claude Code
   is likewise floor-less: the native build auto-updates, and re-runs call
   `claude update`.
-- The Python venv at `~/.local/share/nvim-venv` is reused if it exists;
-  pip dependencies inside it are upgraded on every run.
-- Symlinks under `~/.local/bin` are re-pointed each run with `ln -sf` so
-  brew prefix changes (e.g. Apple Silicon → Intel) are picked up.
 
 ## Conventions
-- Bash strict mode (`set -euo pipefail`).
 - Toggles are env vars with documented defaults; never positional args.
 - `run_as_user` wraps any command that touches `$USER_HOME` so files don't
   end up owned by root. On Linux it's `sudo -u $TARGET_USER -H --`; on
@@ -339,12 +175,8 @@ The script is designed to be run repeatedly on the same box:
   in the driver, not the per-step files.
 
 ## Testing changes
-There is no CI. Validate with:
-```
-bash -n install.sh                          # syntax
-for f in install.d/*.sh; do bash -n "$f"; done
-shellcheck install.sh install.d/*.sh install.d/files/* 2>/dev/null  # if available
-```
+No CI: run `bash -n` + shellcheck on `install.sh`, `install.d/*.sh`,
+`install.d/files/*` before finishing.
 For end-to-end testing on Linux, the cheap path is a throwaway WSL distro
 or a Docker container running Ubuntu 22.04 — the Linux path is destructive
 (apt sources, /usr/local, /usr/bin alternatives) so don't smoke-test it on
@@ -353,243 +185,26 @@ brew installs + user-local symlinks under `~/.local/bin`), but smoke-test
 on a spare account or VM if you want to be safe.
 
 ## Jupyter stack notes
-The notebook workflow is `jupytext.nvim` (open `.ipynb` as hydrogen-style
-`# %%` cells) + `molten-nvim` (run cells against a Jupyter kernel) +
-`image.nvim` (render plot output). Molten requires `pynvim` and
-`jupyter_client` reachable from the python that nvim spawns; the script
-solves the binary half by creating a dedicated venv at
-`~/.local/share/nvim-venv`. The wiring half (`vim.g.python3_host_prog`)
-lives in the chezmoi'd nvim config. If a future task involves "molten
-can't find pynvim" or `:checkhealth provider.python` complaints, the
-venv and that one `vim.g` are the first two places to look.
+The notebook workflow is `jupytext.nvim` + `molten-nvim` + `image.nvim`. The
+install side is the venv at `~/.local/share/nvim-venv`; the wiring
+(`vim.g.python3_host_prog`, plugin specs) is chezmoi's. The details live in
+skills under `.claude/skills/` — load the relevant one before touching that area:
+- `nvim-notebook` — venv/pynvim triage, `:UpdateRemotePlugins`, cells are
+  extmarks, `:MoltenHideOutput`, the cell debugger (`<leader>mD`), inlay hints,
+  which terminals render images.
+- `molten-patches` — molten-nvim carries local patches applied by the chezmoi'd
+  `private_molten.lua`, so load `molten-patches` before updating or pinning
+  molten or debugging vanished output or 100% CPU.
+- `bazel-clangd-triage` — container `$USER`/GID gotchas, ROCm `--config`,
+  clangd not attaching on macOS.
+- `nvim-pdf` — PDF viewing wiring and traps (pdfreader.nvim, snacks.image,
+  ghostscript).
 
-molten-nvim is a **python remote plugin**, so `:MoltenInit` and friends
-only become editor commands after `:UpdateRemotePlugins` writes a
-manifest to `~/.local/share/nvim/rplugin.vim`. The chezmoi'd molten
-plugin spec uses `build = ":UpdateRemotePlugins"`, which lazy.nvim fires
-during sync — and lazy.nvim runs sync the first time the user launches
-`nvim` interactively. **The script does not run `nvim --headless +Lazy!
-sync` itself anymore** (see hang note below); plugin bootstrap is the
-user's first `nvim` run. If `:MoltenInit` is undefined after that, grep
-`~/.local/share/nvim/rplugin.vim` for `molten` — a missing block means
-pynvim isn't reachable from `vim.g.python3_host_prog`.
-
-### Molten cells are extmarks, not `# %%` markers
-Molten has no parser for `# %%` — a *cell* is a `CodeCell` whose bounds are
-`DynamicPosition`s, i.e. literal `nvim_buf_set_extmark` ids
-(`rplugin/python3/molten/position.py`). `:MoltenReevaluateCell` searches those
-spans for one containing the cursor and errors `Not in a cell` when none match
-(`__init__.py`, `moltenbuffer.py:reevaluate_cell`). So a buffer full of `# %%`
-markers has **zero** cells until something evaluates a range.
-
-The chezmoi'd `private_molten.lua` bridges the two: it finds the `# %%` block
-under the cursor and calls `vim.fn.MoltenEvaluateRange(start, stop)` (1-indexed,
-inclusive), which is the documented entry point that routes to `_do_evaluate`
-and registers the extmarks. Don't reach for `:MoltenEvaluateArgument` instead —
-it goes to `_do_evaluate_expr`, which runs code with no buffer span and
-therefore creates no cell.
-
-Two consequences worth keeping in mind:
-- Spans don't survive reopening the file; the markers come back, the tracking
-  doesn't. `:MoltenSave` / `:MoltenLoad` is the persistence story.
-- Anything that clears molten's extmark namespace wholesale destroys the cells.
-  `molten-extmarks` holds both the output virt-text marks *and* the
-  `DynamicPosition` cell bounds, so a blanket `nvim_buf_clear_namespace()`
-  reintroduces `Not in a cell`. The three kinds are distinguishable: cell bounds
-  are bare marks, float spacing carries `virt_lines` of empty strings, real
-  output carries `virt_lines` with non-empty text.
-
-### `:MoltenHideOutput` can't hide virtual-text output
-It only sets `should_show_floating_win = False` — that is the *floating window*.
-With `vim.g.molten_virt_text_output` on (our default), output is drawn as
-virtual text by a separate path, and `update_interface()` unconditionally
-re-runs `show_virtual_output()` for every cell while the option is set
-(`moltenbuffer.py`). Since `:MoltenHideOutput` itself ends by calling
-`_update_interface()`, it clears the float flag and immediately repaints the
-inline text.
-
-Hiding needs the option flipped off (`MoltenUpdateOption`) *and* the
-already-drawn marks deleted — see the namespace note above for why that
-deletion has to be selective. Toggling inline output back on re-runs the cells:
-`show_virtual_output()` early-returns when a cell is DONE and still holds a
-`virt_text_id`, and `clear_virt_output()` never resets that id, so molten
-exposes no repaint-without-execute path. The upstream fix is a one-liner
-(`self.virt_text_id = None` in `clear_virt_output`) if it's ever worth a PR.
-
-### Debugging cells (`<leader>mD`)
-Molten has no debugger; ipykernel does — the one JupyterLab drives, reached as
-DAP messages wrapped in `debug_request` on the kernel's **control** channel. The
-chezmoi'd config bridges nvim-dap to it, attached to the kernel molten already
-started, so cells still run through molten and output still renders inline.
-Built 2026-09-23, verified by driving nvim in tmux (breakpoint hit in the notebook
-buffer, locals, step, continue, output, terminate, re-attach, edited cell).
-
-Pieces (all chezmoi side; nothing install-side — `debugpy` is an ipykernel
-dependency, so every kernel env and the nvim-venv already have it):
-- `dot_config/nvim/scripts/nb_dap_bridge.py` — stdio DAP adapter, run with the
-  nvim-venv python. Also maps lines: ipykernel compiles each cell as
-  `$TMPDIR/ipykernel_<pid>/<murmur2(cell text)>.py`, so before every run Lua
-  sends a custom `nbRegisterCells` request with each `# %%` cell's text + start
-  line; the bridge `dumpCell`s them to learn the paths, splits `.ipynb`
-  breakpoints across them, and rewrites stack frames back to notebook lines.
-- `private_molten.lua` — `debug_cell()` on `<leader>mD`; finds molten's kernel
-  via `ps` ancestry (the ipykernel whose `-f` connection file descends from this
-  nvim's pid — molten exposes no API for it); `lazyvim.json` enables `dap.core`.
-  It also carries the **molten patch** (subsection below).
-- `private_dap.lua` — dap-ui / virtual-text tuning for large values.
-
-Traps found while building it — each one looked like success at first:
-- **Cell text must match byte-for-byte** what molten sends
-  (`MoltenEvaluateRange` over whole lines, `"\n"`-joined), or the hash differs
-  and breakpoints silently don't bind. The bridge compares against the
-  `execute_input` it sees on iopub and emits an `nbWarning` event on mismatch.
-- **Molten marks cells Done early** — fixed by a local patch to molten; see
-  the next subsection before touching molten.
-- **Terminate killed the kernel.** nvim-dap ends attach sessions with
-  `terminate` or `disconnect{terminateDebuggee=true}`; debugpy obeys by killing
-  the process it's in — the kernel. molten then shows `* On Hold` forever. The
-  bridge always sends `disconnect{terminateDebuggee=false}` and hides
-  `supportsTerminateRequest`.
-
-Behavior to expect: while a session is attached, breakpoints also fire on a
-plain `<leader>mc`, and on functions defined by cells run earlier (all cells are
-registered, keyed by text) — but only for cells whose text hasn't changed since
-they ran. `<leader>dt` detaches; the cell resumes and finishes.
-
-Debugger UI (`private_dap.lua`): dap-ui's stock Scopes pane is a fixed 40
-columns with unwrapped values, so big lists were cut at the border, and
-nvim-dap-virtual-text wrote whole reprs inline into the code. The spec sets
-dap-ui `wrap = true` (must be dap-ui's own option — it sets `'wrap'` per window
-after the buffer is shown, so a `FileType`/`BufWinEnter` autocmd loses), makes
-the sidebar 33% of the width with Scopes at 55% of it, and caps inline values
-at 60 chars via `display_callback`. Children paging (100 + a `more` node) is
-debugpy's behaviour, not a bug.
-
-### ⚠ Local patches to molten-nvim — read before updating molten
-Two **patches to molten's own source** are applied by the chezmoi'd
-`private_molten.lua` (`MOLTEN_PATCHES`, `patch_molten`, `unpatch_molten`): the
-own-execute filter in `runtime.py`, which the cell debugger depends on, and a
-highlight-leak fix in `moltenbuffer.py` (subsection below). Anyone updating
-molten, pinning a new version, or debugging "cell output vanished" / "nvim at
-100% CPU" must know they exist. `MOLTEN_PATCHES` is one entry per file
-(`file`, `mark`, `warn`, `hunks`); each file is patched all-or-nothing and
-independently of the other.
-
-**Why.** molten's `JupyterRuntime.tick()` (`rplugin/python3/molten/runtime.py`)
-feeds every iopub message to the current output with no `parent_header` check,
-and any `status: idle` ends the current cell. With a debugger attached that is
-wrong twice: every DAP request is a control message and publishes busy/idle,
-and on attach ipykernel sends *itself* a silent `execute_request` (to start
-debugpy) whose idle sits in molten's backlog until the next cell is queued.
-Symptom without the patch: `Out[...]: ✓ Done` while paused at a breakpoint,
-the real output dropped or pinned to the next cell. A msg_type filter was
-tried and is **not** enough (the second case is an `execute_request`).
-
-**What.** Two hunks, marked `# [nvim-config] own-execute filter`:
-```diff
-     def run_code(self, code: str) -> None:
--        self.kernel_client.execute(code)
-+        msg_id = self.kernel_client.execute(code)
-+        # [nvim-config] own-execute filter
-+        if msg_id:
-+            self.__dict__.setdefault("_nvim_own_ids", set()).add(msg_id)
- ...
-                 if "content" not in message or "msg_type" not in message:
-                     continue
-+                # [nvim-config] own-execute filter
-+                own = self.__dict__.get("_nvim_own_ids")
-+                if own is not None and (message.get("parent_header") or {}).get("msg_id") not in own:
-+                    continue
-```
-The remote jupyter-server client (`jupyter_server_api.py`) returns no msg_id
-from `execute`, so `own` stays `None` there and that path is unfiltered, as
-upstream.
-
-**Lifecycle.**
-- Applied from the spec's `init` on **every nvim startup** (idempotent: skipped
-  if the marker is present). `init` runs before molten's python host imports
-  the file, so the running host always has it.
-- Reverted (`git checkout -- runtime.py moltenbuffer.py` in the plugin dir) on the
-  `User LazyUpdatePre` / `LazySyncPre` / `LazyRestorePre` events, because
-  lazy.nvim updates with a plain, non-forced `git checkout` that a dirty file
-  would block. Consequence: right after a `:Lazy update` the *current* session
-  may run unpatched molten code if the host restarts; the next startup
-  re-patches.
-- All-or-nothing per file: if any anchor in a file is missing (upstream edited
-  those lines) that file is left alone and a startup warning names it —
-  "molten iopub patch no longer applies" (only debugging loses cell output) or
-  "molten highlight-leak patch no longer applies" (the CPU leak below returns).
-
-#### Highlight-leak patch (`moltenbuffer.py`)
-**Why.** `update_interface()` runs on every cursor move and calls
-`_show_selected()`, which adds one `nvim_buf_add_highlight` per line of the
-current cell to the `molten-highlights` namespace. The old ones are cleared only
-when the cursor moves to a *different* cell. Staying in one cell therefore
-accumulates marks without bound. Found 2026-09-25: a 108-line notebook left open
-~1.5 days held **971,568** marks in that namespace and nvim sat at 99% CPU
-forever (`sample` stack: `update_screen → win_line → decor_redraw_col_impl →
-decor_range_insert → memmove`). Diagnose a live instance via its
-`nvim.<pid>.0` socket with `nvim --server … --remote-expr` counting
-`nvim_buf_get_extmarks` per namespace; `:lua
-vim.api.nvim_buf_clear_namespace(0, vim.api.nvim_get_namespaces()["molten-highlights"], 0, -1)`
-recovers it without losing cells (bounds live in `molten-extmarks`).
-
-**What.** One hunk, marked `# [nvim-config] highlight leak`, after the
-buffer-membership guard in `_show_selected`:
-```diff
-         if buf.number not in [b.number for b in self.buffers]:
-             return
- 
-+        # [nvim-config] highlight leak
-+        self.nvim.funcs.nvim_buf_clear_namespace(buf.number, self.highlight_namespace, 0, -1)
-+
-         if span.begin.lineno == span.end.lineno:
-```
-Safe because that namespace only ever holds the selected cell's highlight.
-Verified in tmux: a 3-line cell after 200 paced `j`/`k` moves went 27 → 123
-marks unpatched, stayed at 3 patched; highlight still follows the cursor
-across cells. (Moves must be paced — fast typeahead coalesces `CursorMoved`.)
-
-**When molten updates.**
-1. Start nvim; if a warning appears, open the new file it names and re-find the
-   anchors — for `runtime.py` the `run_code` execute call and the
-   `"content" not in message` guard in `tick`; for `moltenbuffer.py` the
-   buffer guard at the top of `_show_selected` — and update `MOLTEN_PATCHES`.
-2. Check upstream first: if molten now filters iopub by parent msg_id itself,
-   or clears the highlight namespace in `_show_selected`, drop that entry.
-3. Verify: `git -C ~/.local/share/nvim/lazy/molten-nvim diff` shows the three
-   hunks across both files; count `molten-highlights` marks stays at the cell's
-   line count while moving inside one cell; then in a notebook set a breakpoint, `<leader>mD`, and confirm the
-   cell reads `... Running` while paused and shows its output after
-   `<leader>dc`.
-
-**Upstream.** Worth a PR to benlubas/molten-nvim: track the execute msg_id per
-output and ignore foreign iopub messages. That also fixes molten sharing a
-kernel with any other client (e.g. JupyterLab via `:MoltenInit <json>`).
-The highlight leak is a separate one-line PR (clear the namespace in
-`_show_selected`).
-
-### Why we don't run headless sync from this script
-Earlier triage on macOS: `nvim --headless +Lazy! sync +qa` hung for >2
-minutes at 0% CPU. `sample` showed the stack ending in
-`getchar_common → os_inchar → loop_poll_events → kevent`. Verbose
-logging (`-V15/tmp/nvim-verbose.log`) eventually surfaced this:
-
-    LazyVim requires Neovim >= 0.11.2
-    For more info, see: https://github.com/LazyVim/LazyVim/issues/6421
-    Press any key to exit
-
-The user's brew had `neovim 0.10.2` lingering from an earlier install.
-LazyVim's startup compatibility check fires `getchar()` to wait for an
-ack, kevent on `/dev/null` blocks forever (it doesn't return EOF the way
-read(2) on a closed fd would), and headless nvim never exits. With
-`brew upgrade neovim` the same headless sync command finished in 10s. So:
-
-- The script enforces `MIN_NVIM_VERSION` (set to LazyVim's current
-  minimum, 0.11.2 at time of writing) via an awk-based version compare
-  in `nvim_version_ok()`. macOS upgrades through `brew upgrade neovim`;
-  Linux rebuilds from `-b stable`.
-- Bump `MIN_NVIM_VERSION` when LazyVim bumps its requirement.
+### Don't run headless `nvim --headless +Lazy! sync` from this script
+It hangs: LazyVim's startup version check fires `getchar()` and libuv's
+kevent on `/dev/null` blocks forever (see the `MIN_NVIM_VERSION` comment in
+`install.sh`), and the LazyVim default plugin set has shown other intermittent
+hangs inside `os_inchar`/kevent even with a current nvim.
 - Don't try to "fix" a hang by piping stdin from `/dev/null` — that
   doesn't help, because the block is in libuv's kevent, not in a
   `read()` syscall.
@@ -600,105 +215,3 @@ but separately from the version-mismatch hang above, headless sync of
 the LazyVim default plugin set has shown other intermittent hangs inside
 `os_inchar`/kevent. Don't re-add headless sync — let the user's first
 interactive `nvim` do it, which is what lazy.nvim is designed for anyway.
-
-Image rendering only works in graphics-capable terminals (kitty, wezterm,
-ghostty; on macOS iTerm2 also works). Default Windows Terminal in WSL and
-macOS Terminal.app won't render plots — that's a terminal limitation, not
-a config bug.
-
-### macOS clangd discovery
-On macOS, brew's `llvm` formula is keg-only (not auto-linked) so the
-script symlinks `~/.local/bin/clangd -> $(brew --prefix llvm)/bin/clangd`
-rather than `brew link --force llvm` (which would clobber Apple's
-clang/clang++ on PATH). For nvim/lspconfig to find it, `~/.local/bin`
-needs to be on PATH — and that's the chezmoi'd shell rc's job. If a
-future task is "clangd LSP not attaching on macOS", the first thing to
-check is `which clangd` from the same shell that launches nvim — if it
-returns nothing, the chezmoi config isn't putting `~/.local/bin` on PATH.
-
-## PDF viewing in nvim
-
-Built 2026-09-20 (macOS, nvim 0.12.2). `nvim file.pdf` renders pages via
-`r-pletnev/pdfreader.nvim`. User-facing keys and subcommands are in
-CHEATSHEET.md; this section is the wiring and the traps.
-
-Install side (this repo): `poppler` / `poppler-utils` in
-`install.d/01-system-prereqs.sh`, no separate toggle — it's small and
-`pdftotext` is generally useful. It supplies `pdftotext` (text mode),
-`pdfinfo` (page count), `pdftoppm` (unused by the plugin, but there if
-you ever hand-roll against image.nvim). **ghostscript was not added
-explicitly**: brew pulls `gs` in as an imagemagick dependency, and
-ImageMagick's PDF delegate needs it to rasterize. Verified `magick
--density 200 'f.pdf[0]'` produces a PNG on this box with no explicit gs
-install. If a future Linux run fails to rasterize, apt's imagemagick may
-not pull ghostscript the same way — that's the first thing to check.
-
-Config side (chezmoi, `dot_config/nvim/lua/plugins/private_pdfreader.lua`):
-four things beyond the plugin spec, all load-bearing.
-
-1. **`snacks.image` must be explicitly enabled.** LazyVim ships snacks
-   but leaves the image module off (`snacks.config.image.enabled` is nil
-   out of the box), and pdfreader renders through it. Without
-   `opts = { image = { enabled = true } }` on `folke/snacks.nvim` you get
-   a blank buffer.
-2. **`pdf` must be removed from `snacks.image.formats`.** snacks claims
-   `*.pdf` itself — `pdf` is in its default format list
-   (`lua/snacks/image/init.lua`), and it builds a `BufReadCmd` pattern
-   straight from that table, converting the PDF into its own preview
-   buffer (`filetype` becomes `markdown`). It wins the race against
-   pdfreader because `BufReadCmd` fires at read time. The failure is
-   nasty because it *looks* like success: pages render, because snacks
-   renders them. But pdfreader never sees the buffer, so no keymap is
-   bound and `n` stays Vim's next-match — the tell is
-   `E486: Pattern not found: <stale search text>` when you press `n`.
-   Diagnose with `:lua print(vim.bo.filetype)` in a PDF buffer: `pdf` is
-   correct, `markdown` means snacks hijacked it. The spec pins the full
-   format list minus `pdf`, so if a snacks update adds a format, add it
-   there too.
-3. **`validation.is_supported_terminal` is overridden.** Upstream
-   hardcodes `{ "kitty", "ghostty" }` and string-matches `$TERM`, then
-   silently forces text mode on a miss. That check fails *inside tmux
-   even in kitty*, because `$TERM` is `tmux-256color`. The override
-   delegates to `require("snacks.image.terminal").env()` and treats
-   `supported ~= false` as yes, so it tracks snacks' own table (which has
-   a proper tmux entry that wraps escapes in the `\ePtmux;` passthrough)
-   instead of pinning a second stale allowlist. Deliberately not a fork:
-   lazy.nvim would clobber an in-place edit on the next update. Upstream
-   fix is a one-line PR to that allowlist.
-4. **`lazy = false`.** Not lazy-loadable at all. The plugin registers its
-   `BufEnter *.pdf` autocmd — and the n/p/z/q/e keymaps — inside
-   `setup()`, so it must be loaded *before* the PDF buffer is read.
-   `event = "VeryLazy"` was tried and is too late: it fires after the
-   file is already open, the autocmd misses that first `BufEnter`, and no
-   keymap is bound (same `E486` symptom as above). `cmd = "PDFReader"` is
-   later still. Verify with
-   `:lua print(#vim.api.nvim_get_autocmds({event="BufEnter",pattern="*.pdf"}))`
-   — 1 is right, 0 means it never loaded.
-
-Don't add a `BufReadCmd *.pdf` autocmd for text extraction alongside it.
-An earlier iteration of this work did exactly that (the "Route A" idea)
-and it collides — two handlers on the same buffer fight over its
-contents. `:PDFReader setViewMode text` covers that need.
-
-**Terminal requirement is stricter than the rest of the image stack.**
-Rendering needs the Kitty graphics protocol *plus* the unicode-
-placeholder extension, which anchors images to text-grid cells so the
-terminal clips them. kitty and ghostty have it; **wezterm does not**
-(`placeholders = false` in snacks' `lua/snacks/image/terminal.lua`).
-Without placeholders snacks blits at absolute screen coordinates and
-pages paint over the statusline, splits, and tabline — tmux makes it
-worse, since nvim's coordinates don't survive tmux's own layout.
-Confirmed working in kitty; wezterm was tried and abandoned for this.
-Note this is *narrower* than image.nvim's requirement — molten plots
-render fine in wezterm via `backend = "kitty"`, so "images work in my
-terminal" does not imply pdfreader will.
-
-pdfreader is young (single upstream commit `f8c0676` at time of writing).
-Two dead ends found while reading it, in case behavior changes: `q` is
-bound to zoom-out inside a PDF buffer, not quit (use `:q`); and
-`get_book_from_buffer_var` despite the name *creates* a book by falling
-back to `expand("%:p")`, which is why the first `BufEnter` renders
-without any explicit open step.
-
-`StefanBartl/pdfport.nvim` is the other option; drags in the author's
-`lib.nvim`, not worth it.

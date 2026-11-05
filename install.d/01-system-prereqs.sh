@@ -15,19 +15,27 @@ if [ "$OS" = "linux" ]; then
     # the bind-mount preflight guard in install.sh.
     apt-get install -y \
         ninja-build gettext cmake unzip curl wget git \
-        build-essential ripgrep ca-certificates \
+        build-essential ripgrep fd-find ca-certificates \
         gnupg lsb-release \
         imagemagick \
         poppler-utils \
         python3-venv python3-pip python3-dev
+    # Debian/Ubuntu ship fd as `fdfind` (the `fd` name is taken by another
+    # package). LazyVim's pickers look for `fd` first, so expose it under
+    # that name via ~/.local/bin (same PATH contract as clangd/jupytext).
+    run_as_user mkdir -p "$USER_HOME/.local/bin"
+    run_as_user ln -sf "$(command -v fdfind)" "$USER_HOME/.local/bin/fd"
 else
     # macOS: install only what's missing so we don't gratuitously upgrade
     # tools the user is pinning. Xcode CLT (git, curl, make) is pulled in
     # by brew on its first install.
     echo "==> brew prereqs"
-    BREW_FORMULAE=(ninja cmake gettext ripgrep imagemagick poppler)
-    if ! command -v python3 >/dev/null 2>&1; then
-        BREW_FORMULAE+=(python)
+    BREW_FORMULAE=(ninja cmake gettext ripgrep fd imagemagick poppler)
+    # Xcode CLT always provides a `python3`, but it's 3.9 — too old for
+    # molten-nvim (see MIN_PYTHON_VERSION). Only pull brew's python when
+    # nothing on PATH meets the floor; brew links it as `python3.13`.
+    if ! find_python >/dev/null; then
+        BREW_FORMULAE+=(python@3.13)
     fi
     for f in "${BREW_FORMULAE[@]}"; do
         brew_install_if_missing "$f"
