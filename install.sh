@@ -123,7 +123,9 @@
 #         on the system clipboard in modern terminals (kitty/wezterm/
 #         ghostty/iTerm2) without needing the helpers at all. The helpers
 #         are the fallback path for terminals that don't honor OSC 52
-#         (xterm, some VTE-based emulators). Skipped if INSTALL_TMUX=0.
+#         (xterm, some VTE-based emulators). Also git-clones TPM,
+#         tmux-resurrect and tmux-continuum into ~/.tmux/plugins/ (both
+#         OSes; undo: rm -rf ~/.tmux/plugins). Skipped if INSTALL_TMUX=0.
 #     - starship (cross-shell prompt with git branch / user / context).
 #         Linux: official sh.starship.rs installer drops a binary at
 #         /usr/local/bin/starship. macOS: 'brew install starship'. The

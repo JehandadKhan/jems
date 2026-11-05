@@ -198,6 +198,17 @@ terminals that don't honor OSC 52 (stock xterm, some VTE emulators);
 the chezmoi'd config binds `y` to pipe through whichever helper is
 present.
 
+**Session save/restore**: the script clones [TPM](https://github.com/tmux-plugins/tpm),
+[tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and
+[tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) into
+`~/.tmux/plugins/`; the chezmoi'd `~/.tmux.conf` loads them. Continuum
+saves every 15 minutes and restores the last save when the tmux server
+starts, so after a reboot plain `tmux` brings back sessions, windows,
+splits and working directories. Claude Code panes come back on the same
+conversation (`claude --resume <id>`) via a resurrect hook in the chezmoi
+config. Manual: `prefix C-s` save, `prefix C-r` restore; `prefix U`
+updates plugins.
+
 ### Nerd font
 
 The icons starship / lualine / the tmux status bar use only render if

@@ -84,6 +84,21 @@ Don't break these without updating both sides:
   nvim is launched inside tmux, otherwise `:checkhealth image.nvim` errors
   with "tmux does not have allow-passthrough enabled" and plots never
   render. The chezmoi'd `~/.tmux.conf` is expected to set this.
+- tmux plugins: `install.d/12-tmux.sh` git-clones `tmux-plugins/tpm`,
+  `tmux-resurrect` and `tmux-continuum` into `~/.tmux/plugins/<repo>` (TPM's
+  own layout; skipped if already cloned). The chezmoi'd `~/.tmux.conf`
+  declares the **same list** as `@plugin` lines and loads TPM last, guarded
+  by `test -x` so a box without the clones still starts tmux. Add a plugin on
+  both sides. The step must not call TPM's `bin/install_plugins`: it runs
+  `tmux start-server`, which loads the conf, and continuum's auto-restore
+  (`@continuum-restore on`) would replay the last save into that headless
+  server whenever no other tmux server is running. Claude Code panes are
+  pinned to their conversation by `~/.claude/tmux-resurrect-hook.sh`
+  (chezmoi, `@resurrect-hook-post-save-layout`): it reads
+  `~/.claude/sessions/<pid>.json` (`sessionId`, `tmux` pane id) for live
+  interactive sessions and rewrites those panes' saved command to
+  `claude --resume <id>`; `@resurrect-processes '"~claude --resume"'`
+  makes restore re-run it.
 - new-notebook creation: `jupytext --to ipynb` writes **no `kernelspec`**
   into notebook metadata, and jupytext.nvim's `get_ipynb_metadata`
   (`lua/jupytext/utils.lua:16-17`) indexes both the `io.open` result and

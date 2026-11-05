@@ -1,4 +1,4 @@
-# Step 12 — tmux + clipboard helpers.
+# Step 12 — tmux + clipboard helpers + plugins (TPM, resurrect, continuum).
 #
 # Installs the tmux binary plus the OS bridges tmux copy-mode needs to land
 # yanks on the system clipboard. The chezmoi'd ~/.tmux.conf carries the
@@ -90,6 +90,29 @@ if [ "$INSTALL_TMUX" = "1" ]; then
         brew_ensure tmux "$MIN_TMUX_VERSION"
         # macOS: pbcopy/pbpaste are part of the OS, nothing to install.
     fi
+
+    # Plugins: TPM + tmux-resurrect + tmux-continuum, cloned straight into
+    # TPM's layout (~/.tmux/plugins/<repo>) with plain git. The chezmoi'd
+    # ~/.tmux.conf declares the same list as `set -g @plugin` lines and
+    # loads TPM last; keep the two lists in sync. We deliberately don't call
+    # TPM's bin/install_plugins: it runs `tmux start-server`, which sources
+    # ~/.tmux.conf, which loads continuum, whose auto-restore would replay
+    # the last resurrect save into a headless server (relaunching every
+    # saved Claude/nvim pane) if no other tmux server is running. On a
+    # fresh box ~/.tmux.conf may not exist yet anyway (chezmoi apply comes
+    # after this script). Re-runs skip existing clones; update from inside
+    # tmux with `prefix U` (TPM), add new ones with `prefix I`.
+    TMUX_PLUGIN_DIR="$USER_HOME/.tmux/plugins"
+    run_as_user mkdir -p "$TMUX_PLUGIN_DIR"
+    for repo in tmux-plugins/tpm tmux-plugins/tmux-resurrect tmux-plugins/tmux-continuum; do
+        dest="$TMUX_PLUGIN_DIR/${repo#*/}"
+        if [ -d "$dest/.git" ]; then
+            echo "==> tmux plugin already present: $dest"
+        else
+            echo "==> Cloning tmux plugin $repo to $dest"
+            run_as_user git clone --depth 1 --quiet "https://github.com/$repo.git" "$dest"
+        fi
+    done
 else
     echo "==> INSTALL_TMUX=0; skipping tmux install"
 fi
