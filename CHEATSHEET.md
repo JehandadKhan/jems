@@ -486,3 +486,72 @@ dance outside the browser; carbonyl then just renders the pages.
 hasn't shipped a release since Feb 2023. If `j`/`k`/`gg` matter to you,
 use `w3m` instead — same tmux-pane workflow but text-only and
 configurable via `~/.w3m/keymap`.
+
+## Screen-recording a whiteboard session (macOS)
+
+Recording a handwritten walkthrough — a proof, a derivation, a design
+sketch — with an **Onyx Boox** e-ink tablet as the whiteboard and your
+voice over it. None of these tools are installed by `install.sh`; this
+section is here because the triage (e-ink refresh, MJPEG capture,
+mic-only audio) is the part that isn't obvious.
+
+Everything below is OSS or OS-built-in — no account, no subscription.
+
+### Getting the Boox onto the Mac
+
+The Boox's own **Screen Cast** (notification shade) serves an MJPEG
+stream over Wi-Fi at `http://<boox-ip>:8080`. Open that in a browser and
+fullscreen the tab, or capture the stream directly (below). `BooxDrop` /
+`BOOX Assistant` over USB also mirrors on models that support it.
+
+Before casting, set the device refresh to its fastest mode (**X-Mode** /
+"Speed", Regal off). On the default refresh mode handwriting ghosts and
+trails badly on video — this is the single biggest quality lever, far
+more than recorder choice. Cast framerate is ~10–15 fps, which is fine
+for writing and bad for scrolling: write, pause, then advance.
+
+### Recording
+
+| Tool | License | Use it when |
+| ---- | ------- | ----------- |
+| `Cmd+Shift+5` | built-in | One take, no scenes. Options → pick the mic → Record Selected Portion |
+| **OBS Studio** | GPL-2.0 | Scenes, webcam PiP, hotkey pause/resume. `brew install --cask obs` |
+| **ffmpeg** | LGPL/GPL | Scripted capture, or grabbing the MJPEG stream pixel-exact |
+
+OBS setup: Window Capture (the cast window) + Audio Input Capture (mic);
+Output → Recording Format `mp4`, encoder `Apple VT H.264`; `Alt+drag` on
+the source to crop. That's the whole stack.
+
+Skipping the compositor entirely — record the Boox stream and the mic
+straight to a file, no window scaling, no screen-capture overhead:
+
+```bash
+ffmpeg -f avfoundation -i ":0" -i "http://<boox-ip>:8080/video" \
+  -c:v h264_videotoolbox -b:v 4M -c:a aac -shortest proof.mp4
+```
+
+`:0` is the default mic — confirm the index with
+`ffmpeg -f avfoundation -list_devices true -i ""`. The stream path after
+the port differs across Boox firmware; open `http://<boox-ip>:8080` in a
+browser first and take the URL the page actually loads.
+
+### Audio
+
+Mic-only needs nothing extra — this is the normal case for a voiceover.
+macOS screen recording captures the mic but **not** system audio; if you
+ever need the latter, `brew install --cask blackhole-2ch` (GPL-3.0) and
+route through it. Use a USB mic or AirPods rather than the MacBook mic:
+the built-in one picks up pen-on-glass tapping.
+
+### Trimming
+
+- **LosslessCut** (GPL-2.0) — cut dead air with no re-encode. Covers most
+  of what a single-take recording needs.
+- **Kdenlive** (GPL-3.0) — titles, multiple takes stitched together.
+- DaVinci Resolve's free tier still requires an account — skip it.
+
+### Workflow
+
+Pre-write the skeleton (statement, lemma headings) on the Boox before
+recording, then film yourself filling in the steps. Long silent stretches
+of writing are where these recordings die.
